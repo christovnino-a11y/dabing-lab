@@ -223,7 +223,8 @@ def _dabing_stopa(zakazka: Zakazka, vety: list[Veta], urovne: dict[int, tuple[fl
         zisk_db = float(np.clip(chtene, typicky - svorka, typicky + svorka))
         if abs(zisk_db - chtene) > 0.05:
             zapis["zisk_omezen_db"] = round(zisk_db - chtene, 1)
-            log(f"Pozor: hlasitost věty {v.id} je o {abs(zisk_db - chtene):.0f} dB mimo ostatní "
+        if abs(zisk_db - chtene) >= 1.0:  # menší omezení není slyšet — jen do qa_mix.json
+            log(f"Pozor: hlasitost věty {v.id} je o {abs(zisk_db - chtene):.1f} dB mimo ostatní "
                 "— poslechni si ji.")
         zvuk *= 10 ** (zisk_db / 20)
         nabeh = int(NABEH_S * SR_MIX)
