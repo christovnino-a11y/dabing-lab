@@ -66,7 +66,8 @@ def _vyber_titulky(info: dict, jazyk: str) -> str | None:
     """Ruční titulky od autora v jazyce originálu. Automatické titulky YouTube se nepoužívají:
     v testu 2026-09-28 (Codex, Meta Connect) s nimi překlad převzal jejich věrohodně vypadající
     chyby („Aviator" místo Adventurer, „$12.99" místo $1,299), zatímco nesmysly našeho přepisu
-    Codex opraví podle smyslu sám."""
+    Codex opraví podle smyslu sám. Potvrzeno slepým testem celého videa (2 × 2 překlady, 2 hodnotitelé
+    ve shodě): s automatickými titulky 8 vážných chyb, bez nich 4."""
     rucni = [k for k in info.get("rucni", []) if _jazyk(k) == jazyk]
     return rucni[0] if rucni else None
 

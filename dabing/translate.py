@@ -79,10 +79,11 @@ Dostaneš očíslované věty z videa (mluvčí, text originálu v poli `en` a l
   Překládej podle zjevného smyslu v kontextu, ne podle chyby přepisu.
 - Pole `video` (název, popis, druh titulků) použij pro správný zápis jmen, produktů a čísel.
   Má-li video titulky od autora, je `en` text z nich; má-li věta navíc `prepis_stt`, je to náš
-  strojový přepis téhož místa, který se od titulků liší. Jména, čísla a názvy ber z titulků (autor
-  je zná); titulky ale bývají zkrácené, takže obsah věty ber z obojího. Hranice vět v titulcích jsou
-  jen přibližné — slovo navíc na začátku nebo konci věty, které patří k sousední větě, nepřekládej
-  dvakrát.
+  strojový přepis téhož místa, který se od titulků liší. Titulky od autora bývají přesnější, ale
+  i ony můžou být strojové („Hug and Face" místo Hugging Face): kde se liší ve jménu nebo čísle,
+  rozhodni podle smyslu, názvu a popisu videa. Titulky bývají zkrácené, obsah věty ber z obojího.
+  Hranice vět v titulcích jsou jen přibližné — slovo navíc na začátku nebo konci věty, které patří
+  k sousední větě, nepřekládej dvakrát.
 - Jména, názvy produktů a firem nech tak, jak se běžně říkají. Stejný termín překládej vždy stejně
   (drž se glosáře, pokud ho dostaneš, a vrať ho doplněný).
 - Čísla a jednotky piš slovy.
