@@ -71,6 +71,9 @@ Dostaneš očíslované věty z videa (mluvčí, text originálu v poli `en` a l
   úsporněji, než je cíl: když originál mluví pomalu, zvol plnější, přirozenou formulaci (ne vatu
   ani nové informace), ať po větě nezůstane ticho, zatímco řečník na obraze ještě mluví. Limit
   nikdy nepřekračuj; když se obsah nevejde, zkrať vatu a opakování.
+- Text originálu je automatický přepis řeči a může obsahovat špatně slyšená slova (např.
+  „scream" místo „screen", „MetaQui" místo „Meta Quest 3", „2:49" místo „$249").
+  Překládej podle zjevného smyslu v kontextu, ne podle chyby přepisu.
 - Jména, názvy produktů a firem nech tak, jak se běžně říkají. Stejný termín překládej vždy stejně
   (drž se glosáře, pokud ho dostaneš, a vrať ho doplněný).
 - Čísla a jednotky piš slovy.
