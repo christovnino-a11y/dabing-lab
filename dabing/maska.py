@@ -34,7 +34,7 @@ HRANA_CHRANENYCH_S = 0.01
 PLATO_OKNO_S = (0.1, 0.3)
 PLATO_MAX_POKLES_DB_S = 10.0
 PLATO_NAD_PODLAHOU_DB = 6.0     # ustálený ruch sálu ve hlasové stopě není nový zvuk
-NADECH_PRED_SLOVEM_S = 0.35     # nádech před slovem pauzu neotevírá…
+NADECH_PRED_SLOVEM_S = 0.6      # nádech před slovem pauzu neotevírá…
 NADECH_POD_RECI_DB = 15.0       # …když je aspoň o tolik tišší než řeč
 EPS = 1e-6
 
@@ -46,6 +46,12 @@ class Kontext:
     vad: np.ndarray | None = None
     podlaha_db: float = -120.0   # ustálený ruch mimo řeč
     reci_db: float = -20.0       # typická úroveň řeči
+    hladka: np.ndarray | None = None  # energie vyhlazená přes 30 ms (dozvuk po 10 ms kolísá)
+
+    def __post_init__(self) -> None:
+        if self.energie is not None and self.hladka is None and len(self.energie):
+            vykon = np.convolve(10 ** (self.energie / 10), np.ones(3) / 3, mode="same")
+            self.hladka = 10 * np.log10(vykon + 1e-12)
 
     @classmethod
     def z_hlasu(cls, hlas_mono: np.ndarray, sr: int, vad: np.ndarray | None) -> Kontext:
@@ -76,9 +82,9 @@ def nastup(k: Kontext, od_s: float, do_s: float, platne_od_s: float | None = Non
     o DOZVUK_STOP_DB nad dosavadní minimum a vydrží tam aspoň 30 ms. Skok, který začne
     před `platne_od_s` (v rezervě za koncem řeči), platí jen když nepřetržitě vydrží až
     za `platne_od_s` + 30 ms — koncová souhláska tak neprojde, potlesk ano."""
-    if k.energie is None:
+    if k.hladka is None:
         return None
-    e = k.energie
+    e = k.hladka  # na surové energii by kolísání dozvuku sálu vypadalo jako nový zvuk
     i0, i1 = _i(od_s), min(len(e), int(do_s / RAMEC_S))
     platne = _i(platne_od_s) if platne_od_s is not None else i0
     minimum, nad = np.inf, 0
@@ -109,7 +115,9 @@ def plato(k: Kontext, od_s: float, do_s: float) -> float | None:
     if sklon < -PLATO_MAX_POKLES_DB_S:
         return None  # klesá jako dozvuk
     if k.vad is not None and len(k.vad):
-        i = np.arange(int(od_s / KROK_VAD_S), min(len(k.vad), int(np.ceil(w1 * RAMEC_S / KROK_VAD_S))))
+        # od prvního rámce, který začíná až po konci řeči (ten poslední s řečí by vždy „mluvil")
+        i = np.arange(int(np.ceil(od_s / KROK_VAD_S - EPS)),
+                      min(len(k.vad), int(np.ceil(w1 * RAMEC_S / KROK_VAD_S))))
         if i.size and float(k.vad[i].max()) >= VAD_PRAH:
             return None  # mluvčí ještě mluví
     i0 = _i(od_s)
@@ -134,8 +142,9 @@ def _nadech(k: Kontext, t: float, od_dalsiho: float) -> bool:
     """Nástup těsně před dalším slovem, výrazně tišší než řeč = nádech mluvčího."""
     if k.energie is None or t < od_dalsiho - PRED_SLOVEM_S - NADECH_PRED_SLOVEM_S:
         return False
-    i = _i(t)
-    uroven = float(np.median(k.energie[i:i + 5])) if i < len(k.energie) else -120.0
+    usek = k.energie[_i(t):max(_i(t) + 1, int((od_dalsiho - PRED_SLOVEM_S) / RAMEC_S))]
+    # celá událost až k dalšímu slovu (smích s pozvolným náběhem by na začátku prošel)
+    uroven = float(np.percentile(usek, 90)) if usek.size else -120.0
     return uroven < k.reci_db - NADECH_POD_RECI_DB
 
 

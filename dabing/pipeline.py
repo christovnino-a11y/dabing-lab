@@ -63,13 +63,14 @@ class Pipeline:
             self._proces.terminate()
 
     # ----------------------------------------------------------- kroky
-    def _krok(self, modul: str, zakazka: Zakazka, faze: str, argumenty: tuple[str, ...] = ()) -> None:
+    def _krok(self, modul: str, zakazka: Zakazka, faze: str, argumenty: tuple[str, ...] = (),
+              env_navic: dict[str, str] | None = None) -> None:
         self._kontrola()
         hlaseni = self._faze(faze)
         self._proces = subprocess.Popen(
             [str(PYTHON), "-m", f"dabing.stages.{modul}", str(zakazka.slozka), *argumenty],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
-            cwd=str(LAB), env=offline_env(),
+            cwd=str(LAB), env={**offline_env(), **(env_navic or {})},
         )
         posledni: list[str] = []
         zaloguj = ""
@@ -146,17 +147,7 @@ class Pipeline:
 
     def analyzuj(self, z: Zakazka) -> None:
         self._krok("separate", z, "separace")
-        if MODEL_DIALOG_CHECKPOINT.exists():
-            # BandIt najde v hlasové stopě Demucsu jásot, potlesk a smích; mix je vrátí do pozadí
-            try:
-                self._krok("dialog", z, "pozadi", ("hlas", "--efekty"))
-            except Zruseno:
-                raise
-            except RuntimeError as chyba:  # bez BandItu dabing pojede dál jen s Demucsem
-                self.log(f"BandIt selhal, jásot přes řeč zmizí spolu s hlasem: {chyba}")
-            self._kontrola()
-        else:
-            self.log("BandIt chybí (modely/bandit_plus) — jásot přes řeč zmizí spolu s hlasem.")
+        self._efekty(z)
         self._krok("asr_local", z, "prepis")
         if z.pocet_mluvcich != 1:
             self._krok("diar", z, "mluvci")
@@ -167,6 +158,22 @@ class Pipeline:
             self.log(f"{len(z.vety)} vět, mluvčích: {len({v.mluvci for v in z.vety})}")
 
     @staticmethod
+    def _efekty(self, z: Zakazka) -> None:
+        """BandIt najde v hlasové stopě Demucsu jásot, potlesk a smích; mix je vrátí do pozadí.
+        Hotový krok se přeskočí. Selhání dabing nezastaví, jen zmizí jásot přes řeč."""
+        if not MODEL_DIALOG_CHECKPOINT.exists():
+            self.log("BandIt chybí (modely/bandit_plus) — jásot přes řeč zmizí spolu s hlasem.")
+            return
+        for env in (None, {"DABING_DIALOG_CPU": "1"}):  # když grafika spadne tvrdě, znovu na CPU
+            try:
+                self._krok("dialog", z, "pozadi", ("hlas", "--efekty"), env)
+                return
+            except Zruseno:
+                raise
+            except RuntimeError as chyba:
+                self.log(f"BandIt selhal{'' if env is None else ' i na procesoru'}: {chyba}")
+        self.log("Jásot přes řeč zmizí spolu s hlasem (BandIt neproběhl).")
+
     def _novejsi_nez_vety(z: Zakazka) -> bool:
         """Přepis nebo mluvčí vznikli znovu až po složení vět → věty složit znovu."""
         slozeno = time.mktime(time.strptime(z.kroky["vety"], "%Y-%m-%d %H:%M:%S"))
@@ -190,6 +197,7 @@ class Pipeline:
         self._kontrola()
         self._krok("qa_zpet", z, "kontrola")
         self._oznac_nesrozumitelne(z)
+        self._efekty(z)  # u starších zakázek (Přegenerovat) se efekty dopočítají, jinak přeskočí
         try:
             self._krok("vad", z, "detekce")
         except Zruseno:

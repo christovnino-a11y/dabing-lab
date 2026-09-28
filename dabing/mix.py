@@ -27,7 +27,8 @@ import soxr
 from scipy.ndimage import minimum_filter1d, uniform_filter1d
 
 from . import maska
-from .config import MAX_ODCHYLKA_MLUVCIHO_DB, MAX_ZISK_VETY_DB, SR_MIX, STROP_SPICKY_DBFS, VAD_PRAH
+from .config import (DIALOG_VERZE, MAX_ODCHYLKA_MLUVCIHO_DB, MAX_ZISK_VETY_DB, MODEL_DIALOG_CHECKPOINT,
+                     SR_MIX, STROP_SPICKY_DBFS, VAD_PRAH)
 from .job import Veta, Zakazka, bezpecne_jmeno
 from .media import FFMPEG, export_mp4, ma_video, srt
 
@@ -41,8 +42,9 @@ MIN_VET_PRO_SVORKU = 3
 BLOK_SPICKY = 480         # 10 ms při 48 kHz
 STROP_MAX = 10 ** (-0.5 / 20)  # rezerva pro true peak a AAC
 MIN_ZISK_STROPU = 0.5          # kvůli špičce se celá věta ztiší nejvýš o 6 dB
-OBALKA_SIRKA_S = 0.05          # místní ztišení hlasu kolem špičky podkladu (±25 ms)
+OBALKA_SIRKA_S = 0.01          # místní ztišení hlasu kolem špičky podkladu (šířka minima ≥ vyhlazení)
 OBALKA_HLADKA_S = 0.01
+MIN_OBALKA = 0.25              # místně nejvýš o dalších 12 dB; zbytek přetečení srovná ořez při zápisu
 
 
 def _nacti(cesta: Path, sr: int, kanaly: int) -> np.ndarray:
@@ -131,7 +133,7 @@ def _identita_stopa(vety: list[Veta], hlas: np.ndarray, n: int) -> np.ndarray:
     for a, b in sorted((int(v.start * SR_MIX), min(n, int(v.end * SR_MIX))) for v in vety):
         if a >= b:
             continue
-        if bloky and a <= bloky[-1][1]:
+        if bloky and a <= bloky[-1][1] + 2 * nabeh:
             bloky[-1][1] = max(bloky[-1][1], b)
         else:
             bloky.append([a, b])
@@ -148,7 +150,8 @@ def _pod_strop(zvuk: np.ndarray, pod: np.ndarray, orig_pk: float) -> tuple[np.nd
 
     Strop = −1 dBFS, nebo špička originálu v okně věty (nejvýš −0,5 dBFS). Celá věta se
     ztiší jen podle vzorků, kde podklad sám u stropu není, a nejvýš o 6 dB. Co pak ještě
-    přetéká (úder, ořezaná hudba), srovná místní obálka hlasu kolem té špičky (±25 ms).
+    přetéká (úder, ořezaná hudba), srovná místní obálka hlasu kolem té špičky, nejvýš
+    o dalších 12 dB — česká věta tak nikdy nezmizí; případný zbytek přetečení se zapíše.
     """
     info: dict = {"strop_db": 0.0}
     if not len(zvuk):
@@ -181,7 +184,7 @@ def _pod_strop(zvuk: np.ndarray, pod: np.ndarray, orig_pk: float) -> tuple[np.nd
         h = np.clip(rezerva.min(axis=1) / velikost, 0.0, 1.0).astype(np.float32)
         # rozšířit minimum a vyhladit: výsledek je všude ≤ h, bez lupnutí
         h = minimum_filter1d(h, size=max(1, int(OBALKA_SIRKA_S * SR_MIX)))
-        h = uniform_filter1d(h, size=max(1, int(OBALKA_HLADKA_S * SR_MIX)))
+        h = np.maximum(uniform_filter1d(h, size=max(1, int(OBALKA_HLADKA_S * SR_MIX))), MIN_OBALKA)
         zvuk = zvuk * h
         info["obalka_db"] = round(20 * np.log10(max(float(h.min()), 1e-6)), 1)
         info["pretekle_vzorky"] = int((np.abs(pod + zvuk[:, None]).max(axis=1) > limit + 1e-6).sum())
@@ -275,10 +278,16 @@ def _nacti_efekty(zakazka: Zakazka, n: int, log: Log) -> tuple[np.ndarray | None
         log("BandIt neběžel — jásot a smích přes řeč zmizí spolu s hlasem.")
         return None, "jen_demucs"
     try:
-        hotove = json.loads(info.read_text(encoding="utf-8")).get("stopy") or []
-    except ValueError:
-        hotove = []
-    if "effects" not in hotove or cesta.stat().st_mtime < hlas.stat().st_mtime:
+        data = json.loads(info.read_text(encoding="utf-8"))
+        hotove = data.get("stopy") or []
+        model_ok = (data.get("model") == MODEL_DIALOG_CHECKPOINT.name
+                    and data.get("verze") == DIALOG_VERZE)
+    except (ValueError, AttributeError, OSError):
+        hotove, model_ok = [], False
+    if "effects" not in hotove or not model_ok:
+        log("Pozor: stopa efektů z BandItu chybí nebo je z jiné verze modelu — nepoužívám ji.")
+        return None, "jina_verze_efektu"
+    if cesta.stat().st_mtime < hlas.stat().st_mtime:
         log("Pozor: stopa efektů z BandItu je starší než hlasová stopa — nepoužívám ji.")
         return None, "zastarale_efekty"
     efekty = _nacti(cesta, SR_MIX, 2)
@@ -350,7 +359,12 @@ def sloz(zakazka: Zakazka, log: Log, identita: bool = False) -> dict[str, Path]:
     # odhad hlasu mluvčího = Demucs vocals bez toho, co BandIt v nich označil jako efekty;
     # stopa hudby z BandItu se nepoužívá (plete si s ní kusy řeči)
     efekty, odhad_hlasu = _nacti_efekty(zakazka, n, log)
+    efekty_db = None
     if efekty is not None:
+        v_masce = g > 0.5
+        if v_masce.any():  # kontrola do qa: efekty mají být jen malá část hlasové stopy
+            efekty_db = round(10 * np.log10(float(np.mean(efekty[v_masce] ** 2)) /
+                                            (float(np.mean(hlas[v_masce] ** 2)) + 1e-20) + 1e-20), 1)
         hlas -= efekty
         del efekty
         log("Jásot, potlesk a smích z hlasové stopy vracím do pozadí (BandIt).")
@@ -372,7 +386,7 @@ def sloz(zakazka: Zakazka, log: Log, identita: bool = False) -> dict[str, Path]:
     jmeno = bezpecne_jmeno(zakazka.nazev) + (".identita" if identita else f".{zakazka.jazyk}")
     soubory: dict[str, Path] = {}
     qa: dict = {"pokryti_%": round(pokryti, 1), "useku": len(useky), "vad": stav_vad,
-                "odhad_hlasu": odhad_hlasu}
+                "odhad_hlasu": odhad_hlasu, "efekty_vs_hlas_db": efekty_db}
     if identita:
         podklad += stopa
         del stopa
