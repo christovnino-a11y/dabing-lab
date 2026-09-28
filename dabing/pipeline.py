@@ -17,7 +17,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from . import media, mix, segmenty, translate
-from .config import JOBS, LAB, PYTHON, offline_env
+from .config import JOBS, LAB, MODEL_DIALOG_CHECKPOINT, PYTHON, offline_env
 from .job import Zakazka, id_ze_souboru
 from .tts import Hlas, Zruseno
 
@@ -25,8 +25,8 @@ Log = Callable[[str], None]
 Prubeh = Callable[[float, str], None]
 
 # podíly jednotlivých kroků na celkovém průběhu
-FAZE = [("stazeni", 0.00, 0.05), ("separace", 0.05, 0.20), ("prepis", 0.20, 0.30),
-        ("mluvci", 0.30, 0.38), ("vety", 0.38, 0.40), ("preklad", 0.40, 0.50),
+FAZE = [("stazeni", 0.00, 0.05), ("separace", 0.05, 0.09), ("pozadi", 0.09, 0.24),
+        ("prepis", 0.24, 0.31), ("mluvci", 0.31, 0.38), ("vety", 0.38, 0.40), ("preklad", 0.40, 0.50),
         ("hlas", 0.50, 0.88), ("kontrola", 0.88, 0.91), ("detekce", 0.91, 0.92),
         ("export", 0.92, 1.00)]
 
@@ -63,11 +63,11 @@ class Pipeline:
             self._proces.terminate()
 
     # ----------------------------------------------------------- kroky
-    def _krok(self, modul: str, zakazka: Zakazka, faze: str) -> None:
+    def _krok(self, modul: str, zakazka: Zakazka, faze: str, argumenty: tuple[str, ...] = ()) -> None:
         self._kontrola()
         hlaseni = self._faze(faze)
         self._proces = subprocess.Popen(
-            [str(PYTHON), "-m", f"dabing.stages.{modul}", str(zakazka.slozka)],
+            [str(PYTHON), "-m", f"dabing.stages.{modul}", str(zakazka.slozka), *argumenty],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
             cwd=str(LAB), env=offline_env(),
         )
@@ -146,6 +146,17 @@ class Pipeline:
 
     def analyzuj(self, z: Zakazka) -> None:
         self._krok("separate", z, "separace")
+        if MODEL_DIALOG_CHECKPOINT.exists():
+            # BandIt najde v hlasové stopě Demucsu jásot, potlesk a smích; mix je vrátí do pozadí
+            try:
+                self._krok("dialog", z, "pozadi", ("hlas", "--efekty"))
+            except Zruseno:
+                raise
+            except RuntimeError as chyba:  # bez BandItu dabing pojede dál jen s Demucsem
+                self.log(f"BandIt selhal, jásot přes řeč zmizí spolu s hlasem: {chyba}")
+            self._kontrola()
+        else:
+            self.log("BandIt chybí (modely/bandit_plus) — jásot přes řeč zmizí spolu s hlasem.")
         self._krok("asr_local", z, "prepis")
         if z.pocet_mluvcich != 1:
             self._krok("diar", z, "mluvci")
@@ -181,8 +192,11 @@ class Pipeline:
         self._oznac_nesrozumitelne(z)
         try:
             self._krok("vad", z, "detekce")
+        except Zruseno:
+            raise
         except RuntimeError as chyba:  # bez VAD mix pojede jen podle časů slov
             self.log(f"Detekce řeči selhala, podklad se řídí jen časy slov: {chyba}")
+        self._kontrola()
         self._faze("export")(0.1, "Míchám a exportuji…")
         soubory = mix.sloz(z, self.log)
         self._faze("export")(1.0, "Hotovo")
@@ -215,6 +229,8 @@ class Pipeline:
 def test_mixu(id_zakazky: str) -> dict[str, Path]:
     """„Identity dabing": místo TTS vloží původní hlas. Výsledek má znít jako originál."""
     z = Zakazka.nacti(id_zakazky)
-    subprocess.run([str(PYTHON), "-m", "dabing.stages.vad", str(z.slozka)], cwd=str(LAB),
-                   env=offline_env(), check=True, capture_output=True)
+    vad = subprocess.run([str(PYTHON), "-m", "dabing.stages.vad", str(z.slozka)], cwd=str(LAB),
+                         env=offline_env(), capture_output=True, text=True)
+    if vad.returncode != 0:
+        print("Detekce řeči selhala, podklad se řídí jen časy slov:", vad.stdout[-400:])
     return mix.sloz(z, print, identita=True)

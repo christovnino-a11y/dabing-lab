@@ -93,7 +93,7 @@ def kodek_zvuku(cesta: Path) -> str:
     vystup = subprocess.run([FFPROBE, "-v", "error", "-select_streams", "a:0", "-show_entries",
                              "stream=codec_name", "-of", "csv=p=0", str(cesta)],
                             capture_output=True, text=True)
-    return vystup.stdout.strip()
+    return vystup.stdout.strip().split(",")[0]  # u AC-3 přidá ffprobe prázdné pole
 
 
 def export_mp4(video: Path, mix: Path, cil: Path, jazyk: str, log: Log | None = None) -> Path:
@@ -121,10 +121,12 @@ def _cas_srt(s: float) -> str:
     return f"{h:02d}:{m:02d}:{sek:02d},{ms:03d}"
 
 
-def srt(vety: list[Veta], cil: Path) -> Path:
+def srt(vety: list[Veta], cil: Path, delka_s: float | None = None) -> Path:
+    """Titulky českého dabingu; nic za koncem zvuku."""
     bloky = []
-    for i, v in enumerate((v for v in vety if v.cs.strip()), 1):
-        konec = v.start + (v.vysledna_s or v.delka)
+    konec_zvuku = delka_s if delka_s else float("inf")
+    for i, v in enumerate((v for v in vety if v.cs.strip() and v.start < konec_zvuku), 1):
+        konec = min(v.start + (v.vysledna_s or v.delka), konec_zvuku)
         bloky.append(f"{i}\n{_cas_srt(v.start)} --> {_cas_srt(konec)}\n{v.cs.strip()}\n")
     cil.write_text("\n".join(bloky), encoding="utf-8")
     return cil

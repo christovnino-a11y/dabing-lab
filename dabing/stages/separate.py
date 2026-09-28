@@ -42,6 +42,7 @@ def main() -> None:
         # starší zakázky separace.json nemají — ty dělal tentýž Demucs, stopy platí dál
         model = json.loads(info.read_text())["model"] if info.exists() else MODEL_SEPARACE
         if model == MODEL_SEPARACE:
+            (slozka / "no_vocals.wav").unlink(missing_ok=True)  # starší verze; mix ho nečte
             prubeh(1.0, "Hlas a pozadí už jsou oddělené")
             return
     zacatek = time.monotonic()

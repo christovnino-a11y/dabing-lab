@@ -22,6 +22,13 @@ MODEL_ASR = "mlx-community/parakeet-tdt-0.6b-v3"
 MODEL_DIAR = "nvidia/Nemotron-3-Diarization"
 MODEL_SEPARACE = "hf://htdemucs"  # jen s prefixem hf:// se nenačítá z internetu
 SEPARACE_VERZE = 2                # 2 = pozadí je přesný doplněk (vstup − hlas)
+# BandIt Plus (dialog / hudba / efekty, trénovaný na DnR) z releasu MSST v.1.0.3 (stáhl Nino
+# 2026-09-28); kód a yaml v dabing/vendor/bandit. Má dát do řeči jen řeč, ne jásot, smích
+# ani zpěv — ověřuje se (viz dabing/stages/dialog.py). Licence vah neověřená (Zenodo 10160698).
+MODEL_DIALOG_CHECKPOINT = LAB / "modely" / "bandit_plus" / "model_bandit_plus_dnr_sdr_11.47.chpt"
+MODEL_DIALOG_SHA256 = "c48284779f7d1258a6527d3aaa18a532d45c1f506e2dcc25d5ab179a8c5e2573"
+MODEL_DIALOG_CONFIG = LAB / "dabing" / "vendor" / "bandit" / "config_dnr_bandit_bsrnn_multi_mus64.yaml"
+DIALOG_VERZE = 1
 MODEL_TTS = "k2-fsa/OmniVoice"
 MODEL_ECAPA = "speechbrain/spkrec-ecapa-voxceleb"
 

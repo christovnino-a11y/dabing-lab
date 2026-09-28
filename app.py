@@ -151,26 +151,21 @@ def pregenerovat(id_zakazky: str, tabulka):
     if not id_zakazky:
         yield "", "Nejdřív dokonči dabing.", gr.skip(), gr.skip(), gr.skip(), gr.skip()
         return
-    if _beh["pipeline"] is not None:
-        yield "", "Už běží jiný dabing — počkej, nebo ho zruš.", gr.skip(), gr.skip(), gr.skip(), gr.skip()
-        return
-    z = Zakazka.nacti(id_zakazky)
     radky = tabulka.values.tolist() if hasattr(tabulka, "values") else list(tabulka or [])
-    podle_id = {v.id: v for v in z.vety}
-    zmeneno = 0
-    for radek in radky:
-        v = podle_id.get(int(radek[0]))
-        novy = str(radek[4] or "").strip()
-        if v is not None and novy and novy != v.cs:
-            # ručně upravený text jde do hlasu tak, jak je napsaný (i s fonetikou)
-            v.cs, v.vyslov, v.upraveno, v.zkraceno = novy, novy, True, False
-            zmeneno += 1
-    z.uloz()
-    if not zmeneno:
+    zmeny = {int(r[0]): str(r[4] or "").strip() for r in radky if str(r[4] or "").strip()}
+    if not any(v.cs != zmeny[v.id] for v in Zakazka.nacti(id_zakazky).vety if v.id in zmeny):
         yield "", "V tabulce se nic nezměnilo.", gr.skip(), gr.skip(), gr.skip(), gr.skip()
         return
 
     def prace(p: Pipeline):
+        # úpravy se zapíší až po rezervaci běhu, ať je nepřepíše jiný běžící dabing
+        z = Zakazka.nacti(id_zakazky)
+        for v in z.vety:
+            novy = zmeny.get(v.id)
+            if novy and novy != v.cs:
+                # ručně upravený text jde do hlasu tak, jak je napsaný (i s fonetikou)
+                v.cs, v.vyslov, v.upraveno, v.zkraceno = novy, novy, True, False
+        z.uloz()
         return z, p.nadabuj(z)
     yield from _prubeh_behu(prace)
 

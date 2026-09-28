@@ -11,6 +11,8 @@ krok nic nezapíše a mix použije jen časy slov (s varováním v logu).
 
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import torch
 
@@ -45,7 +47,9 @@ def main() -> None:
             p[i] = model(torch.from_numpy(x[i * OKNO:(i + 1) * OKNO]), SR).item()
             if i % 2000 == 0:
                 prubeh(i / max(n, 1), "Hledám, kde mluvčí opravdu mluví…")
-    np.save(cil, p)
+    docasny = cil.with_name("vad.tmp.npy")
+    np.save(docasny, p)
+    os.replace(docasny, cil)
     prubeh(1.0, f"Řeč v {float((p >= 0.5).mean()) * 100:.0f} % času")
 
 

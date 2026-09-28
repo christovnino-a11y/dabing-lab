@@ -146,7 +146,8 @@ def _orizni_ticho(cesta: Path) -> float:
 
 def slot(zakazka: Zakazka, i: int) -> float:
     v = zakazka.vety[i]
-    dalsi = zakazka.vety[i + 1].start if i + 1 < len(zakazka.vety) else v.end + MAX_POZICKA_S
+    konec_videa = zakazka.delka_s or v.end + MAX_POZICKA_S
+    dalsi = zakazka.vety[i + 1].start if i + 1 < len(zakazka.vety) else min(v.end + MAX_POZICKA_S, konec_videa)
     return v.delka + max(0.0, min(dalsi - v.end - REZERVA_ZA_VETOU_S, MAX_POZICKA_S))
 
 

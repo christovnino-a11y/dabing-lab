@@ -2,8 +2,9 @@
 
 Podklad = originál − g·hlas (maska g z maska.py). Kde mluvčí nemluví, je g = 0
 a hraje originál beze změny, takže publikum, hudba i ruchy zůstanou. V řeči se
-odečte jen odhad hlasu mluvčího; co v něm model separace nechal (jásot přes
-řeč, zpěv), zmizí s ním — to řeší až lepší odhad hlasu, ne mix.
+odečte jen odhad hlasu mluvčího: hlasová stopa Demucsu bez toho, co v ní BandIt
+označil jako efekty (jásot, potlesk, smích) — ty tak zůstanou i přes řeč. Zpěv
+pod řečí zatím ne (stopa hudby z BandItu si plete kusy řeči, nepoužívá se).
 
 Hlasitost: podklad se nikdy neztišuje ani nekomprimuje. Každá česká věta se srovná
 s původním hlasem v tom místě (cíl nejvýš ±4 dB od typické hlasitosti mluvčího, zisk
@@ -23,6 +24,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 import soxr
+from scipy.ndimage import minimum_filter1d, uniform_filter1d
 
 from . import maska
 from .config import MAX_ODCHYLKA_MLUVCIHO_DB, MAX_ZISK_VETY_DB, SR_MIX, STROP_SPICKY_DBFS, VAD_PRAH
@@ -37,7 +39,10 @@ TICHO_DBFS = -60.0        # úroveň pod tímhle je ticho, ne měřitelná řeč
 MAX_POD_NEJHLASITEJSI_DB = 30.0
 MIN_VET_PRO_SVORKU = 3
 BLOK_SPICKY = 480         # 10 ms při 48 kHz
-STROP_MAX = 10 ** (-0.1 / 20)
+STROP_MAX = 10 ** (-0.5 / 20)  # rezerva pro true peak a AAC
+MIN_ZISK_STROPU = 0.5          # kvůli špičce se celá věta ztiší nejvýš o 6 dB
+OBALKA_SIRKA_S = 0.05          # místní ztišení hlasu kolem špičky podkladu (±25 ms)
+OBALKA_HLADKA_S = 0.01
 
 
 def _nacti(cesta: Path, sr: int, kanaly: int) -> np.ndarray:
@@ -138,13 +143,57 @@ def _identita_stopa(vety: list[Veta], hlas: np.ndarray, n: int) -> np.ndarray:
     return hlas * okna[:, None]
 
 
+def _pod_strop(zvuk: np.ndarray, pod: np.ndarray, orig_pk: float) -> tuple[np.ndarray, dict]:
+    """Ztiší hlas věty tak, aby s podkladem nepřesáhl strop. Podklad se nemění.
+
+    Strop = −1 dBFS, nebo špička originálu v okně věty (nejvýš −0,5 dBFS). Celá věta se
+    ztiší jen podle vzorků, kde podklad sám u stropu není, a nejvýš o 6 dB. Co pak ještě
+    přetéká (úder, ořezaná hudba), srovná místní obálka hlasu kolem té špičky (±25 ms).
+    """
+    info: dict = {"strop_db": 0.0}
+    if not len(zvuk):
+        return zvuk, info
+    zaklad = min(max(10 ** (STROP_SPICKY_DBFS / 20), orig_pk), STROP_MAX)
+    pod_pk = np.abs(pod).max(axis=1)
+    volne = pod_pk < zaklad * 10 ** (-1 / 20)
+
+    def spicka(s: float) -> float:
+        return float(np.abs(pod[volne] + s * zvuk[volne, None]).max(initial=0.0))
+
+    if spicka(1.0) > zaklad:
+        dole, nahore = MIN_ZISK_STROPU, 1.0
+        if spicka(dole) <= zaklad:
+            for _ in range(14):
+                s = (dole + nahore) / 2
+                if spicka(s) <= zaklad:
+                    dole = s
+                else:
+                    nahore = s
+        zvuk = zvuk * dole
+        info["strop_db"] = round(20 * np.log10(dole), 1)
+
+    limit = np.maximum(zaklad, pod_pk)
+    if float((np.abs(pod + zvuk[:, None]).max(axis=1) - limit).max()) > 0:
+        # největší h ≤ 1, aby |pod_k + h·zvuk| ≤ limit v obou kanálech (znaménko se počítá)
+        velikost = np.maximum(np.abs(zvuk), 1e-12)
+        souhlasne = np.sign(pod) == np.sign(zvuk)[:, None]
+        rezerva = np.where(souhlasne, limit[:, None] - np.abs(pod), limit[:, None] + np.abs(pod))
+        h = np.clip(rezerva.min(axis=1) / velikost, 0.0, 1.0).astype(np.float32)
+        # rozšířit minimum a vyhladit: výsledek je všude ≤ h, bez lupnutí
+        h = minimum_filter1d(h, size=max(1, int(OBALKA_SIRKA_S * SR_MIX)))
+        h = uniform_filter1d(h, size=max(1, int(OBALKA_HLADKA_S * SR_MIX)))
+        zvuk = zvuk * h
+        info["obalka_db"] = round(20 * np.log10(max(float(h.min()), 1e-6)), 1)
+        info["pretekle_vzorky"] = int((np.abs(pod + zvuk[:, None]).max(axis=1) > limit + 1e-6).sum())
+    return zvuk, info
+
+
 def _dabing_stopa(zakazka: Zakazka, vety: list[Veta], urovne: dict[int, tuple[float, bool]],
                   podklad: np.ndarray, spicky: np.ndarray, log: Log) -> tuple[np.ndarray, dict]:
     """Český hlas na časové ose (mono) a záznam hlasitosti vět do qa_mix.json.
     `spicky` = špička originálu po 10ms blocích (podklad už je upravený na místě)."""
     n = len(podklad)
     stopa = np.zeros(n, dtype=np.float32)
-    strop = 10 ** (STROP_SPICKY_DBFS / 20)
     zaznam: dict[str, dict] = {}
     zvuky = {v.id: _nacti(zakazka.slozka / v.tts, SR_MIX, 1) for v in vety}
     potreba: dict[int, float] = {}
@@ -156,8 +205,10 @@ def _dabing_stopa(zakazka: Zakazka, vety: list[Veta], urovne: dict[int, tuple[fl
         if cil > 0 and vlastni > 0:
             potreba[v.id] = 20 * np.log10(cil / vlastni)
     # TTS je soustavně jinak hlasité než originál (typicky ~−8 dB); ±9 dB hlídá jen
-    # odchylku jednotlivé věty od typického zisku, ne ten posun
+    # odchylku jednotlivé věty od typického zisku, ne ten posun. Z méně než 3 vět se
+    # typický zisk spolehlivě neurčí (medián dvou = průměr), svorka se pak nepoužije.
     typicky = float(np.median(list(potreba.values()))) if potreba else 0.0
+    svorka = MAX_ZISK_VETY_DB if len(potreba) >= MIN_VET_PRO_SVORKU else np.inf
     for v in vety:
         a = int(v.start * SR_MIX)
         zvuk = zvuky.pop(v.id)
@@ -165,8 +216,12 @@ def _dabing_stopa(zakazka: Zakazka, vety: list[Veta], urovne: dict[int, tuple[fl
         if a >= n:
             zaznam[str(v.id)] = {**zapis, "zisk_db": 0.0, "oriznuto_s": round(len(zvuk) / SR_MIX, 2)}
             continue
-        zisk_db = float(np.clip(potreba.get(v.id, typicky),
-                                typicky - MAX_ZISK_VETY_DB, typicky + MAX_ZISK_VETY_DB))
+        chtene = potreba.get(v.id, typicky)
+        zisk_db = float(np.clip(chtene, typicky - svorka, typicky + svorka))
+        if abs(zisk_db - chtene) > 0.05:
+            zapis["zisk_omezen_db"] = round(zisk_db - chtene, 1)
+            log(f"Pozor: hlasitost věty {v.id} je o {abs(zisk_db - chtene):.0f} dB mimo ostatní "
+                "— poslechni si ji.")
         zvuk *= 10 ** (zisk_db / 20)
         nabeh = int(NABEH_S * SR_MIX)
         if len(zvuk) > 2 * nabeh:
@@ -177,22 +232,12 @@ def _dabing_stopa(zakazka: Zakazka, vety: list[Veta], urovne: dict[int, tuple[fl
         if b - a < len(zvuk):
             zapis["oriznuto_s"] = round((len(zvuk) - (b - a)) / SR_MIX, 2)
             zvuk = zvuk[:b - a]
-        # špička: podklad se nikdy nemění, případně se ztiší jen tahle věta
-        pod = podklad[a:b] + stopa[a:b, None]
-        orig = float(spicky[a // BLOK_SPICKY:-(-b // BLOK_SPICKY)].max(initial=0.0))
-        limit = max(min(max(strop, orig), STROP_MAX), float(np.abs(pod).max(initial=0.0)))
-        if float(np.abs(pod + zvuk[:, None]).max(initial=0.0)) > limit:
-            dole, nahore = 0.0, 1.0
-            for _ in range(14):
-                s = (dole + nahore) / 2
-                if float(np.abs(pod + s * zvuk[:, None]).max()) <= limit:
-                    dole = s
-                else:
-                    nahore = s
-            zvuk *= dole
-            zapis["strop_db"] = round(20 * np.log10(max(dole, 1e-6)), 1)
-            if dole < 0.5:
-                log(f"Pozor: věta {v.id} se musela kvůli špičce ztišit o {-zapis['strop_db']:.0f} dB.")
+        zvuk, spicka = _pod_strop(zvuk, podklad[a:b] + stopa[a:b, None],
+                                  float(spicky[a // BLOK_SPICKY:-(-b // BLOK_SPICKY)].max(initial=0.0)))
+        zapis.update(spicka)
+        if spicka.get("strop_db", 0.0) <= -6.0 or spicka.get("obalka_db", 0.0) <= -6.0:
+            log(f"Pozor: věta {v.id} se kvůli špičkám v podkladu místy ztišila "
+                f"(celá {spicka.get('strop_db', 0.0):.0f} dB, místně {spicka.get('obalka_db', 0.0):.0f} dB).")
         stopa[a:b] += zvuk
         zaznam[str(v.id)] = {**zapis, "zisk_db": round(zisk_db + zapis["strop_db"], 1)}
     return stopa, zaznam
@@ -200,7 +245,9 @@ def _dabing_stopa(zakazka: Zakazka, vety: list[Veta], urovne: dict[int, tuple[fl
 
 def _dabovane_vety(zakazka: Zakazka, identita: bool) -> list[Veta]:
     if identita:
-        return [v for v in zakazka.vety if v.en or v.cs]
+        # stejná sada vět jako dabing (když už překlad je), ať test prověří tutéž masku
+        prelozene = [v for v in zakazka.vety if v.cs.strip()]
+        return prelozene or [v for v in zakazka.vety if v.en]
     chybi = []
     for v in zakazka.vety:
         if not v.cs.strip():
@@ -220,6 +267,26 @@ def _dabovane_vety(zakazka: Zakazka, identita: bool) -> list[Veta]:
     return [v for v in zakazka.vety if v.cs.strip()]
 
 
+def _nacti_efekty(zakazka: Zakazka, n: int, log: Log) -> tuple[np.ndarray | None, str]:
+    """Stopa efektů z BandItu nad hlasovou stopou Demucsu (jásot, potlesk, smích), 48 kHz."""
+    cesta, info, hlas = (zakazka.cesta("efekty_hlas.wav"), zakazka.cesta("dialog_hlas.json"),
+                         zakazka.cesta("vocals.wav"))
+    if not cesta.exists() or not info.exists():
+        log("BandIt neběžel — jásot a smích přes řeč zmizí spolu s hlasem.")
+        return None, "jen_demucs"
+    try:
+        hotove = json.loads(info.read_text(encoding="utf-8")).get("stopy") or []
+    except ValueError:
+        hotove = []
+    if "effects" not in hotove or cesta.stat().st_mtime < hlas.stat().st_mtime:
+        log("Pozor: stopa efektů z BandItu je starší než hlasová stopa — nepoužívám ji.")
+        return None, "zastarale_efekty"
+    efekty = _nacti(cesta, SR_MIX, 2)
+    if len(efekty) != n:
+        efekty = np.pad(efekty[:n], ((0, max(0, n - len(efekty))), (0, 0)))
+    return efekty, "demucs_bez_efektu_bandit"
+
+
 def _nacti_vad(zakazka: Zakazka, delka_s: float, log: Log) -> tuple[np.ndarray | None, str]:
     cesta, hlas = zakazka.cesta("vad.npy"), zakazka.cesta("vocals16.wav")
     if not cesta.exists():
@@ -228,7 +295,11 @@ def _nacti_vad(zakazka: Zakazka, delka_s: float, log: Log) -> tuple[np.ndarray |
     if hlas.exists() and cesta.stat().st_mtime < hlas.stat().st_mtime:
         log("Pozor: detekce řeči je starší než hlasová stopa — nepoužívám ji, podklad jen podle slov.")
         return None, "zastarala"
-    vad = np.load(cesta).astype(np.float32)
+    try:
+        vad = np.load(cesta).astype(np.float32)
+    except (ValueError, OSError, EOFError):
+        log("Pozor: detekce řeči (vad.npy) je poškozená — podklad se řídí jen časy slov.")
+        return None, "poskozena"
     if len(vad) * maska.KROK_VAD_S < delka_s - 1.0:
         log("Pozor: detekce řeči nepokrývá celé video — konec se řídí jen časy slov.")
         return vad, "kratka"
@@ -268,15 +339,21 @@ def sloz(zakazka: Zakazka, log: Log, identita: bool = False) -> dict[str, Path]:
         hlas = np.pad(hlas[:n], ((0, max(0, n - len(hlas))), (0, 0)))
 
     vad, stav_vad = _nacti_vad(zakazka, n / SR_MIX, log)
-    energie = maska.energie_db(hlas.mean(axis=1), SR_MIX)
-    useky = maska.useky_aktivity(vety, vad, energie)
-    # slova vět bez překladu mají znít v originále, i když k nim sahá rezerva sousední věty
+    kontext = maska.Kontext.z_hlasu(hlas.mean(axis=1), SR_MIX, vad)
+    useky = maska.useky_aktivity(vety, kontext)
+    # věty bez překladu mají znít v originále, i když k nim sahá rezerva sousední věty
     dabovane = {v.id for v in vety}
-    chranene = [(od, do) for v in zakazka.vety if v.id not in dabovane and not identita
-                for _, od, do in (v.slova or [["", v.start, v.end]])]
-    g = maska.maska(useky, energie, SR_MIX, n, chranene)
+    chranene = [(v.start, v.end) for v in zakazka.vety if v.id not in dabovane]
+    g = maska.maska(useky, kontext, SR_MIX, n, chranene)
     pokryti = float((g > 0).mean()) * 100
     log(f"Hlas mluvčího se odečítá v {pokryti:.0f} % času, jinde hraje originál beze změny.")
+    # odhad hlasu mluvčího = Demucs vocals bez toho, co BandIt v nich označil jako efekty;
+    # stopa hudby z BandItu se nepoužívá (plete si s ní kusy řeči)
+    efekty, odhad_hlasu = _nacti_efekty(zakazka, n, log)
+    if efekty is not None:
+        hlas -= efekty
+        del efekty
+        log("Jásot, potlesk a smích z hlasové stopy vracím do pozadí (BandIt).")
     if identita:
         stopa = _identita_stopa(vety, hlas, n)
     else:
@@ -294,7 +371,8 @@ def sloz(zakazka: Zakazka, log: Log, identita: bool = False) -> dict[str, Path]:
     vystupy.mkdir(exist_ok=True)
     jmeno = bezpecne_jmeno(zakazka.nazev) + (".identita" if identita else f".{zakazka.jazyk}")
     soubory: dict[str, Path] = {}
-    qa: dict = {"pokryti_%": round(pokryti, 1), "useku": len(useky), "vad": stav_vad}
+    qa: dict = {"pokryti_%": round(pokryti, 1), "useku": len(useky), "vad": stav_vad,
+                "odhad_hlasu": odhad_hlasu}
     if identita:
         podklad += stopa
         del stopa
@@ -302,11 +380,12 @@ def sloz(zakazka: Zakazka, log: Log, identita: bool = False) -> dict[str, Path]:
         stopa, qa["vety"] = _dabing_stopa(zakazka, vety, urovne, podklad, spicky, log)
         # podklad dabingu = originál bez dabovaného mluvčího (nepřeložená řeč v něm zůstává)
         soubory["podklad"] = vystupy / f"{bezpecne_jmeno(zakazka.nazev)}.podklad.flac"
+        (vystupy / f"{bezpecne_jmeno(zakazka.nazev)}.pozadi.flac").unlink(missing_ok=True)  # starší název
         _zapis(soubory["podklad"], podklad, "FLAC", "PCM_24")
         podklad += stopa[:, None]
         del stopa
         omezeno = sum(z["u_mluvciho"] for z in qa["vety"].values())
-        strop = sum(z["strop_db"] < 0 for z in qa["vety"].values())
+        strop = sum(z["strop_db"] < 0 or z.get("obalka_db", 0.0) < 0 for z in qa["vety"].values())
         oriznuto = [k for k, z in qa["vety"].items() if z.get("oriznuto_s")]
         if omezeno or strop:
             log(f"Hlasitost vět: {omezeno}× držena u typické hlasitosti mluvčího, "
@@ -341,6 +420,6 @@ def sloz(zakazka: Zakazka, log: Log, identita: bool = False) -> dict[str, Path]:
         log("Exportuji video…")
         soubory["mp4"] = export_mp4(zdroj, hotovy, vystupy / f"{jmeno}.mp4", zakazka.jazyk, log)
     if not identita:
-        soubory["srt"] = srt(zakazka.vety, vystupy / f"{jmeno}.srt")
+        soubory["srt"] = srt(zakazka.vety, vystupy / f"{jmeno}.srt", n / SR_MIX)
     zakazka.hotovo("identita" if identita else "export")
     return soubory

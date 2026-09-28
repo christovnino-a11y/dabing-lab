@@ -17,6 +17,7 @@ dependencies = [
     "huggingface_hub",
     "parakeet-mlx",
     "demucs==4.1.0",
+    "pyyaml",  # config BandIt (dabing/vendor/bandit)
 ]
 
 [tool.uv]
