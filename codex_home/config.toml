@@ -1,0 +1,17 @@
+# Vlastní CODEX_HOME Dabing labu.
+#
+# Nedědí ~/.codex: žádné hooky, skills, MCP servery ani AGENTS.md (pokyn číst
+# Obsidian vault by zdržoval a zbytečně nafukoval každý turn).
+# auth.json je symlink na skutečný ~/.codex/auth.json (přihlášení přes
+# předplatné ChatGPT, žádný API klíč).
+#
+# Model a effort se dají přebít při thread/start; tady jsou výchozí hodnoty.
+
+model = "gpt-5.6-terra"
+model_reasoning_effort = "medium"
+model_verbosity = "low"
+sandbox_mode = "read-only"
+approval_policy = "never"
+
+[tools]
+web_search = false

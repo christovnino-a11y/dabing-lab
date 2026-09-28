@@ -1,0 +1,22 @@
+.venv/
+worker/*/.venv/
+jobs/
+logy/
+codex_home/*
+!codex_home/config.toml
+codex_cwd/
+spike/out/
+__pycache__/
+worker/*/ecapa/
+modely/
+*.tmp
+.DS_Store
+# média a váhy nikdy do gitu
+*.wav
+*.mp4
+*.flac
+*.npy
+*.chpt
+*.ckpt
+*.pth
+*.safetensors

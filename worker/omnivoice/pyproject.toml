@@ -1,0 +1,19 @@
+[project]
+name = "dabing-omnivoice-worker"
+version = "0.1.0"
+description = "OmniVoice (k2-fsa) ve vlastním procesu pro Dabing lab — chyba MPS alokátoru nesmí shodit lab"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    # Doporučení z modelové karty pro Apple Silicon.
+    "torch==2.8.0",
+    "torchaudio==2.8.0",
+    "omnivoice",
+    "soundfile",
+    "numpy",
+    "soxr",
+    # ECAPA pro hlídání identity hlasu (speechbrain/spkrec-ecapa-voxceleb je v HF cache).
+    "speechbrain",
+]
+
+[tool.uv]
+package = false

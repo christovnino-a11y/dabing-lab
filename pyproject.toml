@@ -1,0 +1,23 @@
+[project]
+name = "dabing-lab"
+version = "0.1.0"
+description = "Dabing lab — YouTube video do češtiny (verze A lokální, verze B vše přes Codex app-server)"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "gradio==6.24.0",
+    "numpy",
+    "soundfile",
+    "soxr",
+    "openai-codex==0.154.0",
+    "requests",
+    # Těžké kroky běží jako podprocesy (Gradio proces torch ani mlx nenačítá).
+    "torch==2.13.0",
+    "transformers @ git+https://github.com/huggingface/transformers@89b6b17574892ec0770551537a3fe69d6886703e",
+    "accelerate",
+    "huggingface_hub",
+    "parakeet-mlx",
+    "demucs==4.1.0",
+]
+
+[tool.uv]
+package = false
