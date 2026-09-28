@@ -24,7 +24,8 @@ class Veta:
     start: float
     end: float
     mluvci: int = 0
-    en: str = ""
+    en: str = ""                    # text z přepisu (přesně k času; i text reference hlasu)
+    en_titulky: str = ""            # text z titulků YouTube, kde se liší od přepisu (jde do překladu)
     slova: list = field(default_factory=list)  # [[slovo, od, do], …] z přepisu
     cista: bool = True               # v blízkosti nemluví nikdo jiný (vhodná reference)
     cs: str = ""                    # překlad pro titulky a tabulku
@@ -55,6 +56,7 @@ class Zakazka:
     id: str
     zdroj: str
     nazev: str = ""
+    popis: str = ""                 # popis videa z YouTube (napoví překladači jména)
     delka_s: float = 0.0
     jazyk: str = "cs"
     jazyk_zdroje: str = "auto"      # jazyk originálu ("auto" = pozná překladač sám)

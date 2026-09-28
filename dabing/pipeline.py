@@ -97,6 +97,7 @@ class Pipeline:
         """Založí nebo načte zakázku a stáhne/zkopíruje zdroj."""
         hlaseni = self._faze("stazeni")
         cesta = Path(zdroj).expanduser()
+        info: dict = {}
         if cesta.exists():
             id_ = id_ze_souboru(cesta)
             nazev, delka_s = cesta.stem, media.delka(cesta)
@@ -121,6 +122,8 @@ class Pipeline:
                         jazyk_zdroje=jazyk_zdroje,
                         prekladac=prekladac, pocet_mluvcich=pocet_mluvcich,
                         vytvoreno=time.strftime("%Y-%m-%d %H:%M:%S"))
+        if info:
+            z.popis = info["popis"]
         z.slozka.mkdir(parents=True, exist_ok=True)
         z.uloz()
         self.log(f"Zakázka {z.id}: {z.nazev} ({z.delka_s / 60:.1f} min)")
@@ -133,6 +136,8 @@ class Pipeline:
         else:
             hlaseni(0.2, "Stahuji video…")
             zdroj_media = media.stahni(zdroj, z.slozka, lambda r: None)
+            hlaseni(0.8, "Stahuji titulky…")
+            self._titulky(z, zdroj, info)
         hlaseni(0.9, "Připravuji zvuk…")
         media.extrahuj_zvuk(zdroj_media, z.cesta("audio_hq.wav"), 44100, 2)
         if not z.delka_s:
@@ -145,6 +150,20 @@ class Pipeline:
                              str(zdroj_media), "-c", "copy", str(odkaz)])
         z.hotovo("stazeni")
         return z
+
+    def _titulky(self, z: Zakazka, url: str, info: dict) -> None:
+        """Titulky od autora videa jsou text vět pro překlad (časy zůstávají z přepisu).
+        Selhání dabing nezastaví."""
+        try:
+            data = media.stahni_titulky(url, z.slozka, info, z.jazyk_zdroje)
+        except (RuntimeError, OSError, ValueError, subprocess.SubprocessError) as chyba:
+            self.log(f"Titulky z YouTube se nepodařilo stáhnout — pokračuji bez nich ({chyba}).")
+            return
+        if data is None:
+            self.log("Video nemá titulky od autora — text beru z našeho přepisu.")
+            return
+        self.log(f"Titulky od autora ({data['stopa']}, {len(data['slova'])} slov) — text vět beru "
+                 "z nich, časy z našeho přepisu.")
 
     def analyzuj(self, z: Zakazka) -> None:
         self._krok("separate", z, "separace")

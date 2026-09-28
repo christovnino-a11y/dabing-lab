@@ -8,10 +8,12 @@ původní řeči; co se nevejde, jde do dávkového zkrácení.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 
 import requests
 
+from . import titulky
 from .codex_client import Codex, text
 from .jazyky import DABING, ORIGINAL
 from .job import Veta, Zakazka
@@ -28,6 +30,7 @@ TOLERANCE = 1.05
 PRAH_KRATKEHO_PREKLADU = 0.8
 MIN_CIL_PRODLOUZENI = 25
 LM_STUDIO = "http://127.0.0.1:1234/v1"
+MAX_POPIS_ZNAKU = 1500  # popis videa bývá dlouhý (odkazy, sponzoři); na jména stačí začátek
 
 SCHEMA_PREKLAD = {
     "type": "object",
@@ -74,6 +77,12 @@ Dostaneš očíslované věty z videa (mluvčí, text originálu v poli `en` a l
 - Text originálu je automatický přepis řeči a může obsahovat špatně slyšená slova (např.
   „scream" místo „screen", „MetaQui" místo „Meta Quest 3", „2:49" místo „$249").
   Překládej podle zjevného smyslu v kontextu, ne podle chyby přepisu.
+- Pole `video` (název, popis, druh titulků) použij pro správný zápis jmen, produktů a čísel.
+  Má-li video titulky od autora, je `en` text z nich; má-li věta navíc `prepis_stt`, je to náš
+  strojový přepis téhož místa, který se od titulků liší. Jména, čísla a názvy ber z titulků (autor
+  je zná); titulky ale bývají zkrácené, takže obsah věty ber z obojího. Hranice vět v titulcích jsou
+  jen přibližné — slovo navíc na začátku nebo konci věty, které patří k sousední větě, nepřekládej
+  dvakrát.
 - Jména, názvy produktů a firem nech tak, jak se běžně říkají. Stejný termín překládej vždy stejně
   (drž se glosáře, pokud ho dostaneš, a vrať ho doplněný).
 - Čísla a jednotky piš slovy.
@@ -110,10 +119,19 @@ UVODY = {
 }
 
 
-def _zadani(davka: list[Veta], kontext: list[Veta], glosar: list[dict], rezim: str = "preklad") -> str:
+def _video(zakazka: Zakazka, druh_titulku: str) -> dict:
+    popis = " ".join(re.sub(r"https?://\S+", " ", zakazka.popis).split())[:MAX_POPIS_ZNAKU]
+    return {"nazev": zakazka.nazev, **({"popis": popis} if popis else {}),
+            **({"titulky": druh_titulku} if druh_titulku else {})}
+
+
+def _zadani(davka: list[Veta], kontext: list[Veta], glosar: list[dict], rezim: str = "preklad",
+            video: dict | None = None) -> str:
     def veta(v: Veta) -> dict:
-        zaklad = {"id": v.id, "mluvci": f"M{v.mluvci + 1}", "en": v.en,
+        zaklad = {"id": v.id, "mluvci": f"M{v.mluvci + 1}", "en": v.en_titulky or v.en,
                   "originál_trvá_s": round(v.delka, 1)}
+        if v.en_titulky:
+            zaklad["prepis_stt"] = v.en
         if v.prirozena_s and rezim != "preklad":
             zaklad["dabing_teď_trvá_s"] = round(v.prirozena_s, 1)  # změřeno z vygenerovaného hlasu
         if rezim == "preklad":
@@ -122,7 +140,8 @@ def _zadani(davka: list[Veta], kontext: list[Veta], glosar: list[dict], rezim: s
                   "limit_znaku": v.max_znaku}
         return {**zaklad, **oprava, **({"cil_znaku": v.cil_znaku} if rezim == "prodlouzit" else {})}
 
-    data = {"kontext_predchozich_vet": [{"en": v.en, "cs": v.cs} for v in kontext],
+    data = {**({"video": video} if video else {}),
+            "kontext_predchozich_vet": [{"en": v.en_titulky or v.en, "cs": v.cs} for v in kontext],
             "glosar": glosar, "vety": [veta(v) for v in davka]}
     return UVODY[rezim] + json.dumps(data, ensure_ascii=False)
 
@@ -231,13 +250,19 @@ def preloz(zakazka: Zakazka, log: Log, prubeh: Callable[[float, str], None]) -> 
     velikost = DAVKA_ZNAKU_OFFLINE if zakazka.prekladac == "offline" else DAVKA_ZNAKU_CODEX
     davky = _davky(vety, velikost)
     glosar: list[dict] = []
+    druh_titulku = titulky.druh(zakazka)
+    video = _video(zakazka, druh_titulku)
+    lisi = titulky.prirad(zakazka)  # bez titulků smaže i staré en_titulky
+    if druh_titulku:
+        log(f"Text vět beru z titulků od autora videa; od našeho přepisu se liší u {lisi} vět "
+            "— překladač uvidí obojí. Časy zůstávají z přepisu.")
     with _klient(zakazka, log) as klient:
         for i, davka in enumerate(davky):
             prubeh(i / max(len(davky), 1), f"Překládám dávku {i + 1}/{len(davky)}…")
             prvni = davka[0].id
             kontext = [podle_id[prvni - k] for k in (3, 2, 1)
                        if prvni - k in podle_id and podle_id[prvni - k].cs]
-            vysledek = klient.dotaz(_zadani(davka, kontext, glosar))
+            vysledek = klient.dotaz(_zadani(davka, kontext, glosar, video=video))
             _pouzij(vysledek, podle_id, zkraceni=False)
             glosar = vysledek.get("glosar", glosar) or glosar
             zakazka.uloz()

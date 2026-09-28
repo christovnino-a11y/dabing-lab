@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import shutil
 import subprocess
+import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
@@ -41,14 +44,92 @@ def spust(prikaz: list[str], log: Log | None = None, cwd: Path | None = None) ->
 
 
 def info(url: str) -> dict:
-    """ID, název a délka videa bez stahování."""
+    """ID, název, délka, popis a nabídka titulků videa bez stahování."""
     vystup = subprocess.run([YT_DLP, "-J", "--no-playlist", "--no-warnings", url],
                             capture_output=True, text=True, timeout=120)
     if vystup.returncode != 0:
         raise RuntimeError("yt-dlp nenačetl video:\n" + vystup.stderr.strip()[-600:])
     data = json.loads(vystup.stdout)
     return {"id": data["id"], "nazev": data.get("title") or data["id"],
-            "delka_s": float(data.get("duration") or 0.0)}
+            "delka_s": float(data.get("duration") or 0.0),
+            "popis": (data.get("description") or "").strip(),
+            "jazyk": _jazyk(data.get("language") or ""),
+            "rucni": sorted(k for k in (data.get("subtitles") or {}) if k != "live_chat")}
+
+
+def _jazyk(kod: str) -> str:
+    """„en-US" / „nl-NL-orig" → „en" / „nl"."""
+    return kod.split("-")[0].lower()
+
+
+def _vyber_titulky(info: dict, jazyk: str) -> str | None:
+    """Ruční titulky od autora v jazyce originálu. Automatické titulky YouTube se nepoužívají:
+    v testu 2026-09-28 (Codex, Meta Connect) s nimi překlad převzal jejich věrohodně vypadající
+    chyby („Aviator" místo Adventurer, „$12.99" místo $1,299), zatímco nesmysly našeho přepisu
+    Codex opraví podle smyslu sám."""
+    rucni = [k for k in info.get("rucni", []) if _jazyk(k) == jazyk]
+    return rucni[0] if rucni else None
+
+
+ZNACKY_TITULKU = re.compile(r"\[[^\]]*\]|\([^)]*\)|>>|♪")
+
+
+def _slova_json3(data: dict) -> list[list]:
+    """Titulky YouTube (json3) → [[slovo, začátek_s], …] bez značek řečníka (>>), zvuků
+    ([applause], (Laughter), (Audience)) a not (♪) — dabér by je jinak přeložil a vyslovil.
+    Automatické titulky mají čas každého slova; ruční jen řádku — slova se po ní rozprostřou."""
+    slova: list[list] = []
+    for udalost in data.get("events", []):
+        start, delka = udalost.get("tStartMs", 0), udalost.get("dDurationMs", 0)
+        segmenty = [(seg.get("tOffsetMs"), ZNACKY_TITULKU.sub(" ", seg.get("utf8", "")).split())
+                    for seg in udalost.get("segs") or []]
+        # ruční titulky mívají v řádku víc segmentů (kurzíva, barva) — rozprostřít je přes událost
+        # jedním společným indexem, ne každý segment znovu od tStartMs
+        bez_casu = sum(len(casti) for posun, casti in segmenty if posun is None)
+        k = 0
+        for posun, casti in segmenty:
+            for slovo in casti:
+                if posun is None:
+                    t = start + delka * k / bez_casu
+                    k += 1
+                else:
+                    t = start + posun
+                slova.append([slovo, round(t / 1000, 2)])
+    return slova
+
+
+def stahni_titulky(url: str, slozka: Path, info: dict, jazyk: str) -> dict | None:
+    """Ruční titulky od autora v jazyce originálu → titulky.json {"stopa", "druh", "jazyk", "slova"}.
+    Jen text (--skip-download). None, když je video v jazyce originálu nemá."""
+    if jazyk == "auto":
+        jazyk = info.get("jazyk", "")
+        if not jazyk:  # yt-dlp jazyk videa nezná vždy — pak ho prozradí jazyk ručních titulků
+            zakladni = {_jazyk(k) for k in info.get("rucni", [])}
+            jazyk = zakladni.pop() if len(zakladni) == 1 else ""
+    cil = slozka / "titulky.json"
+    if cil.exists():
+        ulozene = json.loads(cil.read_text(encoding="utf-8"))
+        # neznámý jazyk (yt-dlp tentokrát titulky ani jazyk nevrátil) není důvod titulky zahodit
+        if not jazyk or ulozene.get("jazyk") == jazyk:
+            return ulozene
+        cil.unlink()  # titulky jiného jazyka originálu by překladač mátly
+    stopa = _vyber_titulky(info, jazyk) if jazyk else None
+    if stopa is None:
+        return None
+    with tempfile.TemporaryDirectory() as tmp:
+        vystup = subprocess.run([YT_DLP, "--no-playlist", "--no-warnings", "--skip-download",
+                                 "--write-subs", "--sub-langs", stopa, "--sub-format", "json3",
+                                 "-o", str(Path(tmp) / "t.%(ext)s"), url],
+                                capture_output=True, text=True, timeout=180)
+        soubor = next(Path(tmp).glob("t.*json3"), None)
+        if vystup.returncode != 0 or soubor is None:
+            raise RuntimeError((vystup.stderr.strip() or "yt-dlp titulky nevrátil")[-300:])
+        slova = _slova_json3(json.loads(soubor.read_text(encoding="utf-8")))
+    data = {"stopa": stopa, "druh": "rucni", "jazyk": jazyk, "slova": slova}
+    docasny = cil.with_suffix(".tmp")
+    docasny.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    os.replace(docasny, cil)
+    return data
 
 
 def stahni(url: str, slozka: Path, log: Log | None = None) -> Path:
