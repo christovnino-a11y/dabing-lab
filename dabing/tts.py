@@ -13,6 +13,7 @@ Postup (kvalita před rychlostí):
 from __future__ import annotations
 
 import json
+import os
 import queue
 import subprocess
 import threading
@@ -24,9 +25,9 @@ import numpy as np
 import soundfile as sf
 
 from . import refs, translate
-from .config import (MAX_POZICKA_S, MAX_ZPOMALENI, MIN_RYCHLOST, PRAH_KRATKE_VETY,
-                     REZERVA_ZA_VETOU_S, SR_TTS, WORKER_PYTHON, WORKER_SKRIPT,
-                     ZRYCHLENI_BEZ_OBAV, offline_env)
+from .config import (KOTVA_SEEDY, KOTVA_TEXT, MAX_POZICKA_S, MAX_ZPOMALENI, MIN_RYCHLOST,
+                     PRAH_KRATKE_VETY, REFERENCE_HLASU, REZERVA_ZA_VETOU_S, SR_TTS, WORKER_PYTHON,
+                     WORKER_SKRIPT, ZRYCHLENI_BEZ_OBAV, offline_env)
 from .job import Veta, Zakazka, otisk_tts
 
 Log = Callable[[str], None]
@@ -158,6 +159,7 @@ class Hlas:
         self.zrusit = zrusit
         self.worker = Worker(log, zakazka.slozka.parent.parent / "logy" / "omnivoice.log")
         self.mluvci_ref: dict[int, str] = {}
+        self.kotvy: dict[int, str] = {}
 
     def _synth(self, v: Veta, vynucena: float | None) -> float:
         """Vygeneruje větu (s cache), vrátí délku po oříznutí ticha."""
@@ -172,7 +174,7 @@ class Hlas:
         cil.parent.mkdir(parents=True, exist_ok=True)
         zadani = {"op": "synth", "id": v.id, "text": v.vyslov or v.cs, "jazyk": self.z.jazyk,
                   "ref_audio": str(reference), "ref_text": refs.text_reference(self.z, v.reference),
-                  "kroky": KROKY, "vystup": str(cil)}
+                  "kroky": KROKY, "seed": v.seed, "vystup": str(cil)}
         if vynucena:
             zadani["duration"] = round(vynucena, 3)
         for pokus in range(2):
@@ -200,15 +202,66 @@ class Hlas:
             v.prirozena_s = v.vysledna_s = delka
         return delka
 
+    def _kotva(self, m: int, stala: str) -> str | None:
+        """Věta v cílovém jazyce namluvená klonem mluvčího (z jeho anglické reference), zamčená
+        jako reference pro všechny jeho věty: hlas zůstane jeho, ale výslovnost je česká —
+        z anglické reference by se přenášel anglický přízvuk. Ze 3 pokusů vyhraje zdravý
+        take nejpodobnější jeho hlasu. Hotová kotva se znovu nepočítá."""
+        text = KOTVA_TEXT[self.z.jazyk]
+        zdroj = self.z.slozka / stala
+        cil = self.z.cesta(f"refs/kotva_{self.z.jazyk}_{m}.wav")
+        popis = cil.with_suffix(".txt")
+        if (cil.exists() and popis.exists() and popis.read_text(encoding="utf-8") == text
+                and cil.stat().st_mtime >= zdroj.stat().st_mtime):
+            return str(cil.relative_to(self.z.slozka))
+        kandidati: list[tuple[bool, float, Path]] = []
+        for seed in KOTVA_SEEDY:
+            if self.zrusit.is_set():
+                raise Zruseno()
+            pokus = cil.with_name(f"{cil.stem}_s{seed}.wav")
+            try:
+                odpoved = self.worker.dotaz({
+                    "op": "synth", "id": f"kotva_{m}", "text": text, "jazyk": self.z.jazyk,
+                    "ref_audio": str(zdroj), "ref_text": refs.text_reference(self.z, stala),
+                    "kroky": KROKY, "seed": seed, "vystup": str(pokus)})
+                if not odpoved.get("ok"):
+                    self.log(f"Kotva M{m + 1} (pokus {seed}): {odpoved.get('chyba')}")
+                    continue
+                delka = _orizni_ticho(pokus)
+                podobnost = self.worker.dotaz({"op": "identita", "a": str(pokus), "b": str(zdroj)},
+                                              timeout=120.0).get("podobnost") or 0.0
+            except WorkerSpadl as chyba:
+                self.log(f"Kotva M{m + 1} (pokus {seed}): {chyba} — restartuji worker")
+                self.worker.zabij()
+                self.worker.start()
+                continue
+            zdravy = len(text) / 22 < delka < len(text) / 8  # ne useknutá ani natažená
+            kandidati.append((zdravy, float(podobnost), pokus))
+        if not kandidati:
+            self.log(f"Mluvčí M{m + 1}: kotvu se nepodařilo namluvit — klonuji z původních vět.")
+            return None
+        zdravy, podobnost, vitez = max(kandidati, key=lambda k: (k[0], k[1]))
+        os.replace(vitez, cil)
+        popis.write_text(text, encoding="utf-8")
+        for _, _, pokus in kandidati:
+            pokus.unlink(missing_ok=True)
+        self.log(f"Mluvčí M{m + 1}: česká kotva hlasu hotová (podobnost {podobnost:.2f}"
+                 f"{'' if zdravy else ', žádný pokus nebyl úplně v pořádku'})")
+        return str(cil.relative_to(self.z.slozka))
+
     def _identita(self, prubeh: Prubeh) -> None:
-        """Věty s referencí „věta", které hlasem vybočují z řady mluvčího, přegenerovat."""
+        """Věty, které hlasem vybočují z řady mluvčího, přegenerovat (kotvu jiným pokusem,
+        emoční referenci kotvou nebo stálou referencí)."""
         for m, stala in self.mluvci_ref.items():
-            vety = [v for v in self.z.vety if v.mluvci == m and v.druh_reference == "veta" and v.tts]
+            kotva = self.kotvy.get(m)
+            vety = [v for v in self.z.vety
+                    if v.mluvci == m and v.druh_reference in ("veta", "kotva") and v.tts]
             if len(vety) < 3:
                 continue
             for v in vety:
+                srovnat = kotva if v.druh_reference == "kotva" and kotva else stala
                 odpoved = self.worker.dotaz({"op": "identita", "a": str(self.z.slozka / v.tts),
-                                             "b": str(self.z.slozka / stala)}, timeout=120.0)
+                                             "b": str(self.z.slozka / srovnat)}, timeout=120.0)
                 v.identita = odpoved.get("podobnost") if odpoved.get("ok") else None
             hodnoty = [v.identita for v in vety if v.identita is not None]
             if not hodnoty:
@@ -217,9 +270,14 @@ class Hlas:
             ulet = [v for v in vety if v.identita is not None
                     and (v.identita < median - IDENTITA_ODCHYLKA or v.identita < IDENTITA_MINIMUM)]
             for v in ulet:
-                self.log(f"Věta {v.id}: hlas vybočil (podobnost {v.identita:.2f} vs medián "
-                         f"{median:.2f}) — generuji se stálou referencí mluvčího")
-                v.reference, v.druh_reference = stala, "mluvci"
+                if v.druh_reference == "kotva":
+                    self.log(f"Věta {v.id}: hlas vybočil (podobnost {v.identita:.2f} vs medián "
+                             f"{median:.2f}) — generuji znovu jiným pokusem")
+                    v.seed += 1
+                else:
+                    self.log(f"Věta {v.id}: hlas vybočil (podobnost {v.identita:.2f} vs medián "
+                             f"{median:.2f}) — generuji se stálou referencí mluvčího")
+                    v.reference, v.druh_reference = (kotva, "kotva") if kotva else (stala, "mluvci")
                 v.qa = sorted(set(v.qa) | {"identita"})
                 self._synth(v, None)
             prubeh(0.8, f"Hlídač identity: mluvčí M{m + 1}, přegenerováno {len(ulet)}")
@@ -230,6 +288,16 @@ class Hlas:
         vety = [v for v in self.z.vety if (v.vyslov or v.cs).strip()]
         self.worker.start()
         try:
+            if REFERENCE_HLASU == "kotva" and self.z.jazyk in KOTVA_TEXT:
+                prubeh(0.0, "Namlouvám českou kotvu hlasu…")
+                for m, stala in self.mluvci_ref.items():
+                    kotva = self._kotva(m, stala)
+                    if kotva:
+                        self.kotvy[m] = kotva
+                for v in self.z.vety:
+                    if v.mluvci in self.kotvy:
+                        v.reference, v.druh_reference = self.kotvy[v.mluvci], "kotva"
+                self.z.uloz()
             start = time.monotonic()
             for i, v in enumerate(vety):
                 self._synth(v, None)

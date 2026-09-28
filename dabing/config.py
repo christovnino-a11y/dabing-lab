@@ -46,6 +46,22 @@ JAZYKY_ZDROJE = {"Automaticky": "auto", "Angličtina": "en", "Němčina": "de", 
                  "Španělština": "es", "Italština": "it", "Polština": "pl", "Slovenština": "sk",
                  "Ruština": "ru", "Ukrajinština": "uk"}
 
+# Reference hlasu (viz tts.py, Hlas._kotva). "kotva" = každý mluvčí nejdřív svým klonovaným
+# hlasem namluví pevnou větu v cílovém jazyce a všechny jeho věty se klonují z ní: hlas zůstane
+# jeho, výslovnost je česká (z anglické reference by se přenesl anglický přízvuk). Cena: emoce
+# jednotlivých vět se přenášejí méně. "veta" = klon z každé původní věty (emoce, ale přízvuk).
+# Nino zvolil kotvu po poslechu 2026-09-28.
+REFERENCE_HLASU = "kotva"
+KOTVA_TEXT = {
+    "cs": "Dobrý den a vítejte. Dnes vám chci ukázat, na čem jsme celý poslední rok pracovali, "
+          "a upřímně si myslím, že vás to opravdu překvapí.",
+    "sk": "Dobrý deň a vitajte. Dnes vám chcem ukázať, na čom sme celý posledný rok pracovali, "
+          "a úprimne si myslím, že vás to naozaj prekvapí.",
+    "de": "Guten Tag und herzlich willkommen. Heute möchte ich Ihnen zeigen, woran wir im letzten "
+          "Jahr gearbeitet haben, und ich glaube ehrlich, dass es Sie überraschen wird.",
+}
+KOTVA_SEEDY = (1, 2, 3)  # tři pokusy, vyhraje ten nejpodobnější hlasu mluvčího
+
 # Pravidla časování (viz tts.py, Hlas._delky).
 ZRYCHLENI_BEZ_OBAV = 1.15   # do tohoto poměru stačí nativní duration OmniVoice
 MIN_RYCHLOST = 0.85         # nikdy rychleji než 1/0,85 přirozené řeči

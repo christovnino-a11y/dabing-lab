@@ -34,7 +34,7 @@ class Veta:
     max_znaku: int = 0
     cil_znaku: int = 0              # kolik znaků zhruba vyplní čas originálu
     reference: str = ""             # cesta k referenci hlasu (relativně ke složce)
-    druh_reference: str = ""        # "veta" (emoce z originálu) nebo "mluvci"
+    druh_reference: str = ""        # "kotva" (česká věta mluvčího), "veta" (emoce z originálu), "mluvci"
     tts: str = ""                   # vygenerovaný hlas (relativně ke složce)
     tts_otisk: str = ""
     prirozena_s: float = 0.0        # délka bez vynucené délky
@@ -42,6 +42,7 @@ class Veta:
     vynucena_s: float | None = None # duration předaná OmniVoice
     pomer: float = 0.0              # přirozená délka / slot
     identita: float | None = None   # podobnost ECAPA s hlavní referencí mluvčího
+    seed: int = 0                   # náhoda generování (hlídač identity ho při vybočení zvýší)
     qa: list[str] = field(default_factory=list)
 
     @property
@@ -113,5 +114,5 @@ def bezpecne_jmeno(text: str, max_delka: int = 80) -> str:
 def otisk_tts(veta: Veta, jazyk: str, kroky: int, reference_mtime: float) -> str:
     """Co když se změní, věta se musí vygenerovat znovu."""
     klic = json.dumps([veta.vyslov or veta.cs, jazyk, kroky, veta.reference, round(reference_mtime, 3),
-                       veta.vynucena_s], ensure_ascii=False)
+                       veta.vynucena_s, veta.seed], ensure_ascii=False)
     return hashlib.sha1(klic.encode()).hexdigest()[:16]

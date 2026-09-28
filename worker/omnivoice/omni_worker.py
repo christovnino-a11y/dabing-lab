@@ -7,7 +7,7 @@ Protokol: jeden JSON na řádek, stdin → stdout. Výpisy knihoven jdou na stde
 stdout patří jen odpovědím.
   {"op": "nacti"}                                   → {"ok": true, "zarizeni": "mps"}
   {"op": "synth", "id", "text", "jazyk", "ref_audio", "ref_text",
-   "duration"?, "kroky"?, "guidance"?, "denoise"?, "vystup"}
+   "duration"?, "kroky"?, "guidance"?, "denoise"?, "seed"?, "vystup"}
                                                     → {"ok": true, "id", "sekundy", "vypocet_s"}
   {"op": "identita", "a": wav, "b": wav}            → {"ok": true, "podobnost": 0.73}
   {"op": "konec"}
@@ -84,6 +84,8 @@ def synth(zadani: dict) -> dict:
         "guidance_scale": float(zadani.get("guidance", 2.0)),
         "denoise": bool(zadani.get("denoise", True)),
     }
+    if zadani.get("seed") is not None:
+        torch.manual_seed(int(zadani["seed"]))
     audio = model.generate(
         text=zadani["text"],
         language=zadani.get("jazyk") or None,
