@@ -1,8 +1,9 @@
 """Jazyky: z čeho se dabuje (originál) a do čeho (dabing).
 
 Originál: jen jazyky, které umí přepis Parakeet TDT v3 (25 evropských jazyků).
-Dabing: jazyky s latinkou, cyrilicí nebo řečtinou, které umí OmniVoice (600+ jazyků)
-a zároveň je umí Parakeet — ten zpětným přepisem kontroluje srozumitelnost dabingu.
+Dabing: jazyky, které umí OmniVoice (600+ jazyků) i Parakeet — ten zpětným přepisem
+kontroluje srozumitelnost dabingu. Z Parakeetových chybí estonština, lotyština, litevština
+a maltština (malé jazyky, pro kotvu a kvalitu hlasu neověřené); dají se přidat stejně.
 Každý jazyk dabingu má „kotvu": pevnou větu, kterou klon mluvčího namluví jako první
 a z níž se pak klonují všechny jeho věty (výslovnost bez přízvuku originálu, viz tts.py).
 """
@@ -32,15 +33,15 @@ DABING: dict[str, JazykDabingu] = {
                        "for the whole past year, and I honestly think it will really surprise you."),
     "de": JazykDabingu("Němčina", "němčiny", "deu", "Deutsch (Synchronfassung)",
                        "Guten Tag und herzlich willkommen. Heute möchte ich Ihnen zeigen, woran wir "
-                       "im letzten Jahr gearbeitet haben, und ich glaube ehrlich, dass es Sie "
-                       "überraschen wird."),
+                       "das ganze letzte Jahr gearbeitet haben, und ehrlich gesagt glaube ich, dass "
+                       "es Sie wirklich überraschen wird."),
     "pl": JazykDabingu("Polština", "polštiny", "pol", "Polski (dubbing)",
                        "Dzień dobry i witajcie. Dziś chcę wam pokazać, nad czym pracowaliśmy przez "
                        "cały ostatni rok, i szczerze mówiąc myślę, że naprawdę was to zaskoczy."),
     "fr": JazykDabingu("Francouzština", "francouzštiny", "fra", "Français (doublage)",
                        "Bonjour et bienvenue. Aujourd'hui, je veux vous montrer ce sur quoi nous "
-                       "avons travaillé toute l'année dernière, et honnêtement, je pense que cela "
-                       "va vraiment vous surprendre."),
+                       "avons travaillé toute cette dernière année, et honnêtement, je pense que "
+                       "cela va vraiment vous surprendre."),
     "es": JazykDabingu("Španělština", "španělštiny", "spa", "Español (doblaje)",
                        "Hola y bienvenidos. Hoy quiero mostrarles en qué hemos trabajado durante "
                        "todo el último año, y sinceramente creo que realmente los va a sorprender."),
@@ -56,27 +57,26 @@ DABING: dict[str, JazykDabingu] = {
                        "afgelopen jaar aan hebben gewerkt, en eerlijk gezegd denk ik dat het "
                        "jullie echt zal verrassen."),
     "hu": JazykDabingu("Maďarština", "maďarštiny", "hun", "Magyar (szinkron)",
-                       "Jó napot, és szeretettel köszöntöm önöket. Ma meg szeretném mutatni, min "
-                       "dolgoztunk az elmúlt egy évben, és őszintén szólva azt hiszem, ez tényleg "
-                       "meg fogja lepni önöket."),
+                       "Jó napot kívánok, és szeretettel köszöntöm önöket. Ma meg szeretném mutatni, "
+                       "min dolgoztunk az egész elmúlt évben, és őszintén szólva azt hiszem, ez "
+                       "tényleg meg fogja lepni önöket."),
     "uk": JazykDabingu("Ukrajinština", "ukrajinštiny", "ukr", "Українська (дубляж)",
                        "Добрий день і ласкаво просимо. Сьогодні я хочу показати вам, над чим ми "
-                       "працювали весь минулий рік, і, чесно кажучи, думаю, що це вас справді "
+                       "працювали весь останній рік, і, чесно кажучи, думаю, що це вас справді "
                        "здивує."),
     "ru": JazykDabingu("Ruština", "ruštiny", "rus", "Русский (дубляж)",
                        "Добрый день и добро пожаловать. Сегодня я хочу показать вам, над чем мы "
-                       "работали весь прошлый год, и, честно говоря, думаю, что это вас "
+                       "работали весь последний год, и, честно говоря, думаю, что это вас "
                        "действительно удивит."),
     "hr": JazykDabingu("Chorvatština", "chorvatštiny", "hrv", "Hrvatski (sinkronizacija)",
                        "Dobar dan i dobrodošli. Danas vam želim pokazati na čemu smo radili cijelu "
-                       "prošlu godinu i iskreno mislim da će vas to stvarno iznenaditi."),
+                       "proteklu godinu i iskreno mislim da će vas to stvarno iznenaditi."),
     "sl": JazykDabingu("Slovinština", "slovinštiny", "slv", "Slovenščina (sinhronizacija)",
                        "Dober dan in dobrodošli. Danes vam želim pokazati, na čem smo delali vse "
                        "zadnje leto, in iskreno mislim, da vas bo to res presenetilo."),
     "ro": JazykDabingu("Rumunština", "rumunštiny", "ron", "Română (dublaj)",
-                       "Bună ziua și bine ați venit. Astăzi vreau să vă arăt la ce am lucrat pe "
-                       "parcursul întregului an trecut și, sincer, cred că vă va surprinde cu "
-                       "adevărat."),
+                       "Bună ziua și bine ați venit. Astăzi vreau să vă arăt la ce am lucrat în tot "
+                       "ultimul an și, sincer, cred că vă va surprinde cu adevărat."),
     "bg": JazykDabingu("Bulharština", "bulharštiny", "bul", "Български (дублаж)",
                        "Добър ден и добре дошли. Днес искам да ви покажа върху какво работихме "
                        "през цялата изминала година и, честно казано, мисля, че наистина ще ви "
@@ -94,7 +94,7 @@ DABING: dict[str, JazykDabingu] = {
                        "det seneste år, og ærligt talt tror jeg, at det virkelig vil overraske jer."),
     "fi": JazykDabingu("Finština", "finštiny", "fin", "Suomi (jälkiäänitys)",
                        "Hyvää päivää ja tervetuloa. Tänään haluan näyttää teille, mitä olemme "
-                       "tehneet koko viime vuoden, ja rehellisesti sanottuna uskon, että se "
+                       "tehneet koko kuluneen vuoden, ja rehellisesti sanottuna uskon, että se "
                        "todella yllättää teidät."),
 }
 

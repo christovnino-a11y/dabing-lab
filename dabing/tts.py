@@ -25,8 +25,8 @@ import numpy as np
 import soundfile as sf
 
 from . import refs, translate
-from .config import (KOTVA_SEEDY, KOTVA_TEXT, MAX_POZICKA_S, MAX_ZPOMALENI, MIN_RYCHLOST,
-                     PRAH_KRATKE_VETY, REFERENCE_HLASU, REZERVA_ZA_VETOU_S, SR_TTS, WORKER_PYTHON,
+from .config import (CIL_VYPLNENI, KOTVA_MIN_PODOBNOST, KOTVA_SEEDY, KOTVA_TEXT, MAX_POZICKA_S, MAX_ZPOMALENI, MIN_RYCHLOST,
+                     PRAH_KRATKE_VETY, REFERENCE_HLASU, REZERVA_ZA_VETOU_S, WORKER_PYTHON,
                      WORKER_SKRIPT, ZRYCHLENI_BEZ_OBAV, offline_env)
 from .job import Veta, Zakazka, otisk_tts
 
@@ -37,6 +37,8 @@ KROKY = 32
 IDENTITA_ODCHYLKA = 0.12
 IDENTITA_MINIMUM = 0.35
 TIMEOUT_VETY_S = 300.0
+PRAH_PRODLOUZENI = 0.75   # hlas kratší než 75 % originálu → nechat text přeformulovat plněji
+MIN_PRODLOUZENI_S = 2.0   # u kratších vět se ticho neřeší (stačí zpomalení)
 
 
 class WorkerSpadl(RuntimeError):
@@ -210,10 +212,11 @@ class Hlas:
         text = KOTVA_TEXT[self.z.jazyk]
         zdroj = self.z.slozka / stala
         cil = self.z.cesta(f"refs/kotva_{self.z.jazyk}_{m}.wav")
-        popis = cil.with_suffix(".txt")
+        popis, mereni = cil.with_suffix(".txt"), cil.with_suffix(".json")
         if (cil.exists() and popis.exists() and popis.read_text(encoding="utf-8") == text
                 and cil.stat().st_mtime >= zdroj.stat().st_mtime):
-            return str(cil.relative_to(self.z.slozka))
+            podobnost = json.loads(mereni.read_text()).get("podobnost", 1.0) if mereni.exists() else 1.0
+            return str(cil.relative_to(self.z.slozka)) if podobnost >= KOTVA_MIN_PODOBNOST else None
         kandidati: list[tuple[bool, float, Path]] = []
         for seed in KOTVA_SEEDY:
             if self.zrusit.is_set():
@@ -235,17 +238,25 @@ class Hlas:
                 self.worker.zabij()
                 self.worker.start()
                 continue
-            zdravy = len(text) / 22 < delka < len(text) / 8  # ne useknutá ani natažená
+            zdravy = bool(len(text) / 22 < delka < len(text) / 8)  # ne useknutá ani natažená
             kandidati.append((zdravy, float(podobnost), pokus))
         if not kandidati:
             self.log(f"Mluvčí M{m + 1}: kotvu se nepodařilo namluvit — klonuji z původních vět.")
             return None
         zdravy, podobnost, vitez = max(kandidati, key=lambda k: (k[0], k[1]))
+        if podobnost < KOTVA_MIN_PODOBNOST:
+            for _, _, pokus in kandidati:
+                pokus.unlink(missing_ok=True)
+            cil.unlink(missing_ok=True)
+            self.log(f"Mluvčí M{m + 1}: kotva hlasu mu není dost podobná ({podobnost:.2f}, "
+                     "nejspíš málo jeho řeči) — klonuji přímo z jeho vět.")
+            return None
         os.replace(vitez, cil)
         popis.write_text(text, encoding="utf-8")
+        mereni.write_text(json.dumps({"podobnost": round(float(podobnost), 3), "zdravy": bool(zdravy)}))
         for _, _, pokus in kandidati:
             pokus.unlink(missing_ok=True)
-        self.log(f"Mluvčí M{m + 1}: česká kotva hlasu hotová (podobnost {podobnost:.2f}"
+        self.log(f"Mluvčí M{m + 1}: kotva hlasu ({self.z.jazyk}) hotová (podobnost {podobnost:.2f}"
                  f"{'' if zdravy else ', žádný pokus nebyl úplně v pořádku'})")
         return str(cil.relative_to(self.z.slozka))
 
@@ -283,21 +294,43 @@ class Hlas:
             prubeh(0.8, f"Hlídač identity: mluvčí M{m + 1}, přegenerováno {len(ulet)}")
         self.z.uloz()
 
+    def _kotvy(self, prubeh: Prubeh) -> None:
+        """Kotvy všech mluvčích (hotové se jen načtou) a z nich změřená rychlost řeči hlasu."""
+        if REFERENCE_HLASU != "kotva" or self.z.jazyk not in KOTVA_TEXT:
+            return
+        prubeh(0.0, "Namlouvám kotvu hlasu v cílovém jazyce…")
+        text = KOTVA_TEXT[self.z.jazyk]
+        for m, stala in self.mluvci_ref.items():
+            kotva = self._kotva(m, stala)
+            if kotva:
+                self.kotvy[m] = kotva
+                delka = sf.info(str(self.z.slozka / kotva)).duration
+                self.z.rychlost_hlasu[str(m)] = round(len(text) / max(delka, 0.5), 2)
+        for v in self.z.vety:
+            if v.mluvci in self.kotvy:
+                v.reference, v.druh_reference = self.kotvy[v.mluvci], "kotva"
+        if self.z.rychlost_hlasu:
+            self.log("Rychlost hlasu (změřeno z kotvy): " + ", ".join(
+                f"M{int(m) + 1} {r:.1f} znaku/s" for m, r in sorted(self.z.rychlost_hlasu.items())))
+        self.z.uloz()
+
+    def priprav_kotvy(self, prubeh: Prubeh) -> None:
+        """Před překladem: kotvy a rychlost hlasu, ať překladatel ví, kolik textu se vejde."""
+        self.mluvci_ref = refs.priprav(self.z)
+        if REFERENCE_HLASU != "kotva" or self.z.jazyk not in KOTVA_TEXT:
+            return
+        self.worker.start()
+        try:
+            self._kotvy(prubeh)
+        finally:
+            self.worker.zavri()
+
     def nadabuj(self, prubeh: Prubeh) -> None:
         self.mluvci_ref = refs.priprav(self.z)
         vety = [v for v in self.z.vety if (v.vyslov or v.cs).strip()]
         self.worker.start()
         try:
-            if REFERENCE_HLASU == "kotva" and self.z.jazyk in KOTVA_TEXT:
-                prubeh(0.0, "Namlouvám českou kotvu hlasu…")
-                for m, stala in self.mluvci_ref.items():
-                    kotva = self._kotva(m, stala)
-                    if kotva:
-                        self.kotvy[m] = kotva
-                for v in self.z.vety:
-                    if v.mluvci in self.kotvy:
-                        v.reference, v.druh_reference = self.kotvy[v.mluvci], "kotva"
-                self.z.uloz()
+            self._kotvy(prubeh)
             start = time.monotonic()
             for i, v in enumerate(vety):
                 self._synth(v, None)
@@ -330,6 +363,22 @@ class Hlas:
             translate.zkrat(self.z, [v for v, _ in dlouhe], self.log)
             for v, _ in dlouhe:
                 self._synth(v, None)
+        # a naopak: věta výrazně kratší než originál → po ní by zůstalo ticho, zatímco řečník
+        # na obraze mluví. Změřená délka hlasu přesně řekne, kolik textu přidat.
+        kratke = [(v, slot(self.z, indexy[v.id])) for v in self.z.vety
+                  if v.tts and not v.upraveno and v.delka >= MIN_PRODLOUZENI_S
+                  and v.prirozena_s < v.delka * PRAH_PRODLOUZENI]
+        if kratke:
+            prubeh(0.87, f"Prodlužuji {len(kratke)} vět, po kterých by zůstalo ticho…")
+            puvodni = {v.id: v.vyslov or v.cs for v, _ in kratke}
+            for v, s in kratke:
+                znaku_za_s = len(puvodni[v.id]) / max(v.prirozena_s, 0.3)  # tahle věta, tenhle hlas
+                v.cil_znaku = int(v.delka * CIL_VYPLNENI * znaku_za_s)
+                v.max_znaku = max(v.cil_znaku, int(s * znaku_za_s * 0.95))
+            translate.prodluz(self.z, [v for v, _ in kratke], self.log)
+            for v, _ in kratke:
+                if (v.vyslov or v.cs) != puvodni[v.id]:
+                    self._synth(v, None)
         prubeh(0.92, "Dolaďuji délky vět…")
         for v in self.z.vety:
             if not v.tts:

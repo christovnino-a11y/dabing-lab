@@ -12,6 +12,7 @@ Výstup: qa_zpet.json {id: {"cer": 0.07, "prepis": "…"}}
 from __future__ import annotations
 
 import json
+import statistics
 import re
 import unicodedata
 
@@ -56,8 +57,7 @@ def main() -> None:
             prubeh((i + 1) / len(vety), f"Kontroluji srozumitelnost {i + 1}/{len(vety)}…")
     (slozka / "qa_zpet.json").write_text(json.dumps(vysledek, ensure_ascii=False, indent=1),
                                          encoding="utf-8")
-    hodnoty = sorted(x["cer"] for x in vysledek.values())
-    median = hodnoty[len(hodnoty) // 2] if hodnoty else 0.0
+    median = statistics.median(x["cer"] for x in vysledek.values()) if vysledek else 0.0
     prubeh(1.0, f"Srozumitelnost: medián CER {median:.1%}")
 
 

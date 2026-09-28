@@ -8,6 +8,7 @@ import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
+from .jazyky import DABING
 from .job import Veta
 
 Log = Callable[[str], None]
@@ -19,9 +20,8 @@ FFPROBE = shutil.which("ffprobe") or "/opt/homebrew/bin/ffprobe"
 # H.264 do 1080p: přehraje ho QuickTime i Finder a video se při exportu jen kopíruje.
 FORMAT_VIDEA = "bv*[vcodec^=avc1][height<=1080]+ba[ext=m4a]/bv*[height<=1080]+ba/b"
 
-ISO3 = {"cs": "ces", "sk": "slk", "de": "deu", "en": "eng"}
-NAZVY_STOP = {"cs": "Čeština (dabing)", "sk": "Slovenčina (dabing)", "de": "Deutsch (Synchron)",
-              "en": "English (dub)"}
+ISO3 = {kod: j.iso3 for kod, j in DABING.items()}
+NAZVY_STOP = {kod: j.stopa for kod, j in DABING.items()}
 
 
 def spust(prikaz: list[str], log: Log | None = None, cwd: Path | None = None) -> None:

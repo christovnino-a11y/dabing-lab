@@ -179,8 +179,8 @@ def zrusit():
 
 
 with gr.Blocks(title="Dabing") as demo:
-    gr.Markdown("# Dabing\nYouTube video do češtiny: přepis, mluvčí, překlad a hlas "
-                "naklonovaný z originálu včetně emocí.")
+    gr.Markdown("# Dabing\nVideo z YouTube nebo souboru do češtiny či jiného jazyka: přepis, mluvčí, "
+                "překlad a hlas naklonovaný z originálu, ostatní zvuky zůstávají.")
     with gr.Row():
         odkaz = gr.Textbox(label="Odkaz na YouTube", placeholder="https://youtu.be/…", scale=3)
         soubor = gr.File(label="…nebo vlastní video/zvuk", file_types=["video", "audio"],

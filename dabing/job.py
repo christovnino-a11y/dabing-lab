@@ -63,6 +63,7 @@ class Zakazka:
     vytvoreno: str = ""
     kroky: dict[str, str] = field(default_factory=dict)  # krok -> čas dokončení
     codex: dict = field(default_factory=dict)            # tokeny a kvóta
+    rychlost_hlasu: dict = field(default_factory=dict)   # mluvčí → znaků/s změřeno z kotvy
     vety: list[Veta] = field(default_factory=list)
 
     # ------------------------------------------------------------ soubory

@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .config import CIL_VYPLNENI, MAX_POZICKA_S, REZERVA_ZA_VETOU_S, ZNAKU_ZA_S
+from .config import CIL_VYPLNENI, MAX_POZICKA_S, REZERVA_ZA_VETOU_S, ZNAKU_ZA_S, ZNAKU_ZA_S_JINAK
 from .job import Veta, Zakazka
 
 MIN_BEH_SLOV = 2
@@ -144,16 +144,12 @@ def sestav(zakazka: Zakazka) -> list[Veta]:
                 continue
         slepene.append((m, list(sl)))
 
-    znaku_za_s = ZNAKU_ZA_S.get(zakazka.jazyk, 13.0)
     vety: list[Veta] = []
     for i, (m, sl) in enumerate(slepene, 1):
         vety.append(Veta(id=i, start=round(sl[0][1], 3), end=round(sl[-1][2], 3), mluvci=m,
                          en=_text(sl), slova=sl))
-    for i, v in enumerate(vety):
-        dalsi = vety[i + 1].start if i + 1 < len(vety) else zakazka.delka_s or v.end + MAX_POZICKA_S
-        pozicka = max(0.0, min(dalsi - v.end - REZERVA_ZA_VETOU_S, MAX_POZICKA_S))
-        v.max_znaku = max(8, int((v.delka + pozicka) * znaku_za_s))
-        v.cil_znaku = max(6, int(v.delka * znaku_za_s * CIL_VYPLNENI))
+    prepocitej_limity(zakazka, vety)
+    for v in vety:
         cizi = [u for u in useky if u["mluvci"] != v.mluvci
                 and u["end"] > v.start - CISTOTA_OKOLI_S and u["start"] < v.end + CISTOTA_OKOLI_S]
         v.cista = not cizi
@@ -170,3 +166,17 @@ if __name__ == "__main__":
     z = Zakazka.nacti(Path(sys.argv[1]))
     uloz_vety(z)
     print(f"{len(z.vety)} vět, mluvčí: {sorted({v.mluvci for v in z.vety})}")
+
+
+def prepocitej_limity(zakazka: Zakazka, vety: list[Veta] | None = None) -> None:
+    """Cíl a strop znaků překladu podle délky věty a rychlosti řeči hlasu v cílovém jazyce
+    (změřené z kotvy mluvčího, jinak odhad z config.ZNAKU_ZA_S). Volá se před překladem."""
+    vety = zakazka.vety if vety is None else vety
+    vychozi = ZNAKU_ZA_S.get(zakazka.jazyk, ZNAKU_ZA_S_JINAK)
+    for i, v in enumerate(vety):
+        # změřeno z kotvy: jak rychle mluví právě tenhle hlas v cílovém jazyce (tts.py)
+        znaku_za_s = zakazka.rychlost_hlasu.get(str(v.mluvci)) or vychozi
+        dalsi = vety[i + 1].start if i + 1 < len(vety) else zakazka.delka_s or v.end + MAX_POZICKA_S
+        pozicka = max(0.0, min(dalsi - v.end - REZERVA_ZA_VETOU_S, MAX_POZICKA_S))
+        v.max_znaku = max(8, int((v.delka + pozicka) * znaku_za_s))
+        v.cil_znaku = max(6, int(v.delka * znaku_za_s * CIL_VYPLNENI))

@@ -26,7 +26,8 @@ Prubeh = Callable[[float, str], None]
 
 # podíly jednotlivých kroků na celkovém průběhu
 FAZE = [("stazeni", 0.00, 0.05), ("separace", 0.05, 0.09), ("pozadi", 0.09, 0.24),
-        ("prepis", 0.24, 0.31), ("mluvci", 0.31, 0.38), ("vety", 0.38, 0.40), ("preklad", 0.40, 0.50),
+        ("prepis", 0.24, 0.31), ("mluvci", 0.31, 0.38), ("vety", 0.38, 0.40), ("kotva", 0.40, 0.44),
+        ("preklad", 0.44, 0.50),
         ("hlas", 0.50, 0.88), ("kontrola", 0.88, 0.91), ("detekce", 0.91, 0.92),
         ("export", 0.92, 1.00)]
 
@@ -180,9 +181,17 @@ class Pipeline:
         return any(z.cesta(j).exists() and z.cesta(j).stat().st_mtime > slozeno + 1
                    for j in ("asr.json", "diar.json"))
 
+    def kotvy(self, z: Zakazka) -> None:
+        """Kotva hlasu každého mluvčího ještě před překladem — z ní se změří, jak rychle
+        tenhle hlas mluví, a překladatel pak dostane přesný cíl délky každé věty."""
+        self._kontrola()
+        Hlas(z, self.log, self.zrusit).priprav_kotvy(self._faze("kotva"))
+
     def preloz(self, z: Zakazka) -> None:
         self._kontrola()
+        segmenty.prepocitej_limity(z)  # kalibrace rychlosti hlasu se mohla změnit
         if all(v.cs for v in z.vety) and "preklad" in z.kroky:
+            translate.dolad_delky(z, self.log, self._faze("preklad"))
             return
         kdo = "Codex" if z.prekladac == "codex" else "lokální model v LM Studiu"
         self.log(f"Překládám ({kdo})…")
@@ -230,6 +239,7 @@ class Pipeline:
              jazyk_zdroje: str = "auto") -> tuple[Zakazka, dict[str, Path]]:
         z = self.priprav(zdroj, jazyk, prekladac, pocet_mluvcich, jazyk_zdroje)
         self.analyzuj(z)
+        self.kotvy(z)
         self.preloz(z)
         return z, self.nadabuj(z)
 

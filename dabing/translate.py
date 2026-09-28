@@ -13,17 +13,20 @@ from collections.abc import Callable
 import requests
 
 from .codex_client import Codex, text
+from .jazyky import DABING, ORIGINAL
 from .job import Veta, Zakazka
 
 Log = Callable[[str], None]
 
-NAZVY_JAZYKU = {"cs": "češtiny", "sk": "slovenštiny", "de": "němčiny", "en": "angličtiny"}
-ZE_JAZYKA = {"en": "z angličtiny", "de": "z němčiny", "fr": "z francouzštiny", "es": "ze španělštiny",
-             "it": "z italštiny", "pl": "z polštiny", "sk": "ze slovenštiny", "ru": "z ruštiny",
-             "uk": "z ukrajinštiny", "auto": "z jazyka originálu (rozpoznej ho sám)"}
+NAZVY_JAZYKU = {kod: j.do_jazyka for kod, j in DABING.items()}
+ZE_JAZYKA = {kod: odkud for kod, (_, odkud) in ORIGINAL.items()}
 DAVKA_ZNAKU_CODEX = 6000
 DAVKA_ZNAKU_OFFLINE = 2500
 TOLERANCE = 1.05
+# Věta kratší než tento podíl cíle se nechá přeformulovat plněji (jinak po ní zůstane díra,
+# zatímco řečník na obraze ještě mluví). Krátké věty pod MIN_CIL_PRODLOUZENI se neřeší.
+PRAH_KRATKEHO_PREKLADU = 0.8
+MIN_CIL_PRODLOUZENI = 25
 LM_STUDIO = "http://127.0.0.1:1234/v1"
 
 SCHEMA_PREKLAD = {
@@ -57,20 +60,25 @@ SCHEMA_PREKLAD = {
 def pokyny(jazyk: str, zdroj: str = "auto") -> str:
     cilovy = NAZVY_JAZYKU.get(jazyk, jazyk)
     odkud = ZE_JAZYKA.get(zdroj, ZE_JAZYKA["auto"])
+    priklad = (' (např. „Muse" → „Mjúz", „VM" → „ví em", „AI" → „éj áj", „Meta" → „Meta")'
+               if jazyk == "cs" else "")
     return f"""Jsi zkušený dabingový překladatel {odkud} do {cilovy}.
 Dostaneš očíslované věty z videa (mluvčí, text originálu v poli `en` a limity znaků). Pravidla:
 - Každou větu přelož do přirozené mluvené řeči, jak by ji řekl dabér. Věrně významem, ne doslovně.
-- Délka: každá věta má `cil_znaku` (tolik znaků vyplní čas, kdy mluví originál) a `limit_znaku`
-  (strop). Přibliž se cíli — překládej úplně a věrně, nic zbytečně nevynechávej, ať po větě
-  nezůstane ticho, zatímco řečník na obraze ještě mluví. Limit nikdy nepřekračuj; když se
-  obsah nevejde, zkrať vatu a opakování.
+- Délka: každá věta má `originál_trvá_s`, `cil_znaku` (tolik znaků změřený hlas řekne za čas,
+  kdy mluví originál) a `limit_znaku` (strop). Při úpravách dostaneš i `dabing_teď_trvá_s`
+  (skutečně změřená délka českého hlasu). Přibliž se cíli — překládej úplně a věrně, nic zbytečně nevynechávej a nepřekládej
+  úsporněji, než je cíl: když originál mluví pomalu, zvol plnější, přirozenou formulaci (ne vatu
+  ani nové informace), ať po větě nezůstane ticho, zatímco řečník na obraze ještě mluví. Limit
+  nikdy nepřekračuj; když se obsah nevejde, zkrať vatu a opakování.
 - Jména, názvy produktů a firem nech tak, jak se běžně říkají. Stejný termín překládej vždy stejně
   (drž se glosáře, pokud ho dostaneš, a vrať ho doplněný).
 - Čísla a jednotky piš slovy.
 - Ke každé větě vrať i pole `vyslov`: stejný překlad, ale cizí jména, názvy a zkratky přepsané
-  foneticky česky tak, jak je má dabér vyslovit (např. „Muse" → „Mjúz", „VM" → „ví em",
-  „AI" → „éj áj", „Meta" → „Meta"). Český hlasový model čte text česky, proto to potřebuje.
-  V `cs` nech jména normálně (to jsou titulky).
+  foneticky podle pravopisu cílového jazyka tak, jak je má dabér vyslovit{priklad}. Hlasový model
+  čte text podle výslovnosti cílového jazyka, proto to potřebuje. V `cs` nech jména normálně
+  (to jsou titulky).
+  Pole se jmenuje `cs`, i když cílový jazyk není čeština — obsahuje překlad do cílového jazyka.
 - Oslovení (tykání/vykání) drž konzistentní podle kontextu.
 - Nic nepřidávej, nekomentuj a nepoužívej žádné nástroje ani soubory.
 Vrať JSON podle schématu: pro každé id pole `cs` a `vyslov` a glosář použitých termínů."""
@@ -89,19 +97,31 @@ def _davky(vety: list[Veta], max_znaku: int) -> list[list[Veta]]:
     return davky
 
 
-def _zadani(davka: list[Veta], kontext: list[Veta], glosar: list[dict], zkratit: bool) -> str:
-    data = {
-        "kontext_predchozich_vet": [{"en": v.en, "cs": v.cs} for v in kontext],
-        "glosar": glosar,
-        "vety": [{"id": v.id, "mluvci": f"M{v.mluvci + 1}", "en": v.en,
-                  **({"soucasny_preklad": v.cs, "soucasna_vyslovnost": v.vyslov or v.cs,
-                     "limit_znaku": v.max_znaku} if zkratit
-                     else {"cil_znaku": v.cil_znaku, "limit_znaku": v.max_znaku})}
-                 for v in davka],
-    }
-    uvod = ("ZKRAŤ tyto překlady tak, aby se vešly do limitu znaků. Zachovej hlavní význam.\n"
-            if zkratit else "Přelož tyto věty.\n")
-    return uvod + json.dumps(data, ensure_ascii=False)
+UVODY = {
+    "preklad": "Přelož tyto věty.\n",
+    "zkratit": "ZKRAŤ tyto překlady tak, aby se vešly do limitu znaků. Zachovej hlavní význam.\n",
+    "prodlouzit": ("PRODLUŽ tyto překlady: jsou výrazně kratší, než jak dlouho řečník na obraze mluví, "
+                   "a po české větě by zůstalo ticho. Přeformuluj je plněji a přirozeněji, jak by to "
+                   "řekl dabér (celými větami, bez zkratkovitosti), a přibliž se `cil_znaku`. "
+                   "Nepřidávej nové informace ani vatu a nepřekroč `limit_znaku`.\n"),
+}
+
+
+def _zadani(davka: list[Veta], kontext: list[Veta], glosar: list[dict], rezim: str = "preklad") -> str:
+    def veta(v: Veta) -> dict:
+        zaklad = {"id": v.id, "mluvci": f"M{v.mluvci + 1}", "en": v.en,
+                  "originál_trvá_s": round(v.delka, 1)}
+        if v.prirozena_s and rezim != "preklad":
+            zaklad["dabing_teď_trvá_s"] = round(v.prirozena_s, 1)  # změřeno z vygenerovaného hlasu
+        if rezim == "preklad":
+            return {**zaklad, "cil_znaku": v.cil_znaku, "limit_znaku": v.max_znaku}
+        oprava = {"soucasny_preklad": v.cs, "soucasna_vyslovnost": v.vyslov or v.cs,
+                  "limit_znaku": v.max_znaku}
+        return {**zaklad, **oprava, **({"cil_znaku": v.cil_znaku} if rezim == "prodlouzit" else {})}
+
+    data = {"kontext_predchozich_vet": [{"en": v.en, "cs": v.cs} for v in kontext],
+            "glosar": glosar, "vety": [veta(v) for v in davka]}
+    return UVODY[rezim] + json.dumps(data, ensure_ascii=False)
 
 
 class _Codex:
@@ -184,10 +204,15 @@ def _klient(zakazka: Zakazka, log: Log):
     return _Offline(zakazka, log) if zakazka.prekladac == "offline" else _Codex(zakazka, log)
 
 
-def _pouzij(vysledek: dict, podle_id: dict[int, Veta], zkraceni: bool) -> None:
+def _pouzij(vysledek: dict, podle_id: dict[int, Veta], zkraceni: bool,
+            jen_delsi: bool = False) -> None:
     for x in vysledek.get("vety", []):
         v = podle_id.get(int(x.get("id", -1)))
         if v is not None and x.get("cs", "").strip() and not v.upraveno:
+            if jen_delsi:  # prodloužení bereme, jen když je opravdu delší a vejde se
+                novy = len((x.get("vyslov") or x["cs"]).strip())
+                if not len(v.vyslov or v.cs) < novy <= v.max_znaku * TOLERANCE:
+                    continue
             v.cs = x["cs"].strip()
             v.vyslov = (x.get("vyslov") or "").strip() or v.cs
             if zkraceni:
@@ -209,7 +234,7 @@ def preloz(zakazka: Zakazka, log: Log, prubeh: Callable[[float, str], None]) -> 
             prvni = davka[0].id
             kontext = [podle_id[prvni - k] for k in (3, 2, 1)
                        if prvni - k in podle_id and podle_id[prvni - k].cs]
-            vysledek = klient.dotaz(_zadani(davka, kontext, glosar, zkratit=False))
+            vysledek = klient.dotaz(_zadani(davka, kontext, glosar))
             _pouzij(vysledek, podle_id, zkraceni=False)
             glosar = vysledek.get("glosar", glosar) or glosar
             zakazka.uloz()
@@ -219,12 +244,64 @@ def preloz(zakazka: Zakazka, log: Log, prubeh: Callable[[float, str], None]) -> 
                 break
             prubeh(0.95, f"Zkracuji {len(dlouhe)} dlouhých vět (kolo {kolo + 1})…")
             for davka in _davky(dlouhe, velikost):
-                _pouzij(klient.dotaz(_zadani(davka, [], glosar, zkratit=True)), podle_id, zkraceni=True)
+                _pouzij(klient.dotaz(_zadani(davka, [], glosar, "zkratit")), podle_id, zkraceni=True)
             zakazka.uloz()
+        _prodluz(klient, zakazka, vety, glosar, prubeh)
     chybi = [v.id for v in vety if not v.cs]
     if chybi:
         raise RuntimeError(f"Překlad chybí u vět {chybi[:10]}{'…' if len(chybi) > 10 else ''}")
     zakazka.hotovo("preklad")
+
+
+def _kratke(vety: list[Veta]) -> list[Veta]:
+    return [v for v in vety if not v.upraveno and v.cs and v.cil_znaku >= MIN_CIL_PRODLOUZENI
+            and len(v.vyslov or v.cs) < v.cil_znaku * PRAH_KRATKEHO_PREKLADU]
+
+
+def _prodluz(klient, zakazka: Zakazka, vety: list[Veta], glosar: list[dict],
+             prubeh: Callable[[float, str], None]) -> int:
+    kratke = _kratke(vety)
+    if not kratke:
+        return 0
+    prubeh(0.97, f"Prodlužuji {len(kratke)} příliš krátkých vět…")
+    podle_id = {v.id: v for v in zakazka.vety}
+    pred = {v.id: v.vyslov or v.cs for v in kratke}
+    velikost = DAVKA_ZNAKU_OFFLINE if zakazka.prekladac == "offline" else DAVKA_ZNAKU_CODEX
+    for davka in _davky(kratke, velikost):
+        _pouzij(klient.dotaz(_zadani(davka, [], glosar, "prodlouzit")), podle_id,
+                zkraceni=False, jen_delsi=True)
+    zakazka.uloz()
+    return sum((v.vyslov or v.cs) != pred[v.id] for v in kratke)
+
+
+def dolad_delky(zakazka: Zakazka, log: Log, prubeh: Callable[[float, str], None]) -> None:
+    """U hotového překladu: příliš krátké věty (po nich by zůstalo ticho) nechá přeformulovat
+    plněji. Bez krátkých vět nic nevolá. Když překladač není k dispozici, jen varuje."""
+    if not _kratke(zakazka.vety):
+        return
+    try:
+        with _klient(zakazka, log) as klient:
+            zmeneno = _prodluz(klient, zakazka, zakazka.vety, [], prubeh)
+        log(f"Prodlouženo {zmeneno} příliš krátkých vět.")
+    except RuntimeError as chyba:
+        log(f"Pozor: krátké věty se nepodařilo prodloužit ({chyba}) — po některých zůstane ticho.")
+
+
+def prodluz(zakazka: Zakazka, vety: list[Veta], log: Log) -> None:
+    """Prodloužení podle skutečně změřené délky hlasu (volá se po prvním průchodu TTS).
+    Selhání překladače dabing nezastaví — věta jen zůstane kratší."""
+    if not vety:
+        return
+    podle_id = {v.id: v for v in zakazka.vety}
+    velikost = DAVKA_ZNAKU_OFFLINE if zakazka.prekladac == "offline" else DAVKA_ZNAKU_CODEX
+    try:
+        with _klient(zakazka, log) as klient:
+            for davka in _davky(vety, velikost):
+                _pouzij(klient.dotaz(_zadani(davka, [], [], "prodlouzit")), podle_id,
+                        zkraceni=False, jen_delsi=True)
+    except RuntimeError as chyba:
+        log(f"Pozor: krátké věty se nepodařilo prodloužit ({chyba}).")
+    zakazka.uloz()
 
 
 def zkrat(zakazka: Zakazka, vety: list[Veta], log: Log) -> None:
@@ -235,5 +312,5 @@ def zkrat(zakazka: Zakazka, vety: list[Veta], log: Log) -> None:
     velikost = DAVKA_ZNAKU_OFFLINE if zakazka.prekladac == "offline" else DAVKA_ZNAKU_CODEX
     with _klient(zakazka, log) as klient:
         for davka in _davky(vety, velikost):
-            _pouzij(klient.dotaz(_zadani(davka, [], [], zkratit=True)), podle_id, zkraceni=True)
+            _pouzij(klient.dotaz(_zadani(davka, [], [], "zkratit")), podle_id, zkraceni=True)
     zakazka.uloz()
