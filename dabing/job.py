@@ -26,6 +26,7 @@ class Veta:
     mluvci: int = 0
     en: str = ""                    # text z přepisu (přesně k času; i text reference hlasu)
     en_titulky: str = ""            # text z titulků YouTube, kde se liší od přepisu (jde do překladu)
+    en_opraveno: str = ""           # totéž s jmény a čísly ověřenými Codexem na webu (jde do překladu)
     slova: list = field(default_factory=list)  # [[slovo, od, do], …] z přepisu
     cista: bool = True               # v blízkosti nemluví nikdo jiný (vhodná reference)
     cs: str = ""                    # překlad pro titulky a tabulku
@@ -49,6 +50,11 @@ class Veta:
     @property
     def delka(self) -> float:
         return self.end - self.start
+
+    @property
+    def en_preklad(self) -> str:
+        """Text originálu pro překlad a tabulku: ověřená jména > titulky od autora > přepis."""
+        return self.en_opraveno or self.en_titulky or self.en
 
 
 @dataclass

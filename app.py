@@ -44,7 +44,7 @@ def _tabulka(z: Zakazka) -> list[list]:
         if v.zkraceno:
             kontrola.insert(0, "zkráceno")
         delka = f"{v.vysledna_s:.1f} / {v.delka:.1f} s" if v.vysledna_s else ""
-        radky.append([v.id, f"{_cas(v.start)}–{_cas(v.end)}", f"M{v.mluvci + 1}", v.en_titulky or v.en, v.cs,
+        radky.append([v.id, f"{_cas(v.start)}–{_cas(v.end)}", f"M{v.mluvci + 1}", v.en_preklad, v.cs,
                       delka, ", ".join(kontrola)])
     return radky
 

@@ -12,6 +12,6 @@ model_reasoning_effort = "medium"
 model_verbosity = "low"
 sandbox_mode = "read-only"
 approval_policy = "never"
-
-[tools]
-web_search = false
+# Vyhledávání na webu (Nino 2026-09-28): ověření jmen, produktů a cen v přepisu před překladem
+# (translate.over_jmena). Ven jdou jen dotazy, které Codex sám položí; zvuk nikdy.
+web_search = "live"

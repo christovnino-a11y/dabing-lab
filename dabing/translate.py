@@ -7,6 +7,7 @@ původní řeči; co se nevejde, jde do dávkového zkrácení.
 
 from __future__ import annotations
 
+import difflib
 import json
 import re
 from collections.abc import Callable
@@ -78,10 +79,11 @@ Dostaneš očíslované věty z videa (mluvčí, text originálu v poli `en` a l
   „scream" místo „screen", „MetaQui" místo „Meta Quest 3", „2:49" místo „$249").
   Překládej podle zjevného smyslu v kontextu, ne podle chyby přepisu.
 - Pole `video` (název, popis, druh titulků) použij pro správný zápis jmen, produktů a čísel.
-  Má-li video titulky od autora, je `en` text z nich; má-li věta navíc `prepis_stt`, je to náš
-  strojový přepis téhož místa, který se od titulků liší. Titulky od autora bývají přesnější, ale
-  i ony můžou být strojové („Hug and Face" místo Hugging Face): kde se liší ve jménu nebo čísle,
-  rozhodni podle smyslu, názvu a popisu videa. Titulky bývají zkrácené, obsah věty ber z obojího.
+  `en` je text originálu: z titulků od autora, pokud je video má, a se jmény a čísly, které už
+  korektor ověřil na webu. Má-li věta navíc `prepis_stt`, je to náš původní strojový přepis téhož
+  místa. Ověřené opravy jmen a čísel v `en` ber jako správné. Titulky od autora bývají přesnější,
+  ale i ony můžou být strojové („Hug and Face" místo Hugging Face): kde se `en` a `prepis_stt` liší
+  jinak, rozhodni podle smyslu, názvu a popisu videa. Titulky bývají zkrácené, obsah ber z obojího.
   Hranice vět v titulcích jsou jen přibližné — slovo navíc na začátku nebo konci věty, které patří
   k sousední větě, nepřekládej dvakrát.
 - Jména, názvy produktů a firem nech tak, jak se běžně říkají. Stejný termín překládej vždy stejně
@@ -95,6 +97,38 @@ Dostaneš očíslované věty z videa (mluvčí, text originálu v poli `en` a l
 - Oslovení (tykání/vykání) drž konzistentní podle kontextu.
 - Nic nepřidávej, nekomentuj a nepoužívej žádné nástroje ani soubory.
 Vrať JSON podle schématu: pro každé id pole `cs` a `vyslov` a glosář použitých termínů."""
+
+
+SCHEMA_OPRAVY = {
+    "type": "object",
+    "properties": {
+        "opravy": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"id": {"type": "integer"}, "puvodne": {"type": "string"},
+                               "opraveno": {"type": "string"}, "duvod": {"type": "string"}},
+                "required": ["id", "puvodne", "opraveno", "duvod"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["opravy"],
+    "additionalProperties": False,
+}
+DAVKA_ZNAKU_OPRAVY = 12000
+
+POKYNY_OPRAVY = """Jsi korektor automatického přepisu řeči (ASR) z videa. Dostaneš název a popis videa
+a očíslované věty přepisu. ASR slyší zvuk dobře, ale neznámá jména píše foneticky („SLR Lexotica"
+= EssilorLuxottica, „MetaQuI" = Meta Quest 3) a čísla zapisuje nejednoznačně („2:49" = $249,
+mluvené „twelve ninety-nine" může být $12.99 i $1,299); občas splete i běžné slovo tak, že věta
+nedává smysl („titles you can scream on Xbox" = stream).
+Najdi vlastní jména, produkty, firmy, ceny a čísla, která jsou zkomolená nebo nejednoznačná,
+a OVĚŘ je vyhledáváním na webu (oficiální zdroje, zpravodajství o téže události). Oprav jen to,
+co je zjevně špatně slyšené a co máš ověřené; nic nepřeformulovávej, neopravuj gramatiku, styl,
+zadrhnutí ani výplňová slova. `puvodne` musí být přesný úsek textu dané věty (přesně tak, jak je
+napsaný), `opraveno` jeho správné znění, `duvod` stručně odkud to víš. Když si nejsi jistý,
+neopravuj. Vrať JSON podle schématu (prázdný seznam, když není co opravit)."""
 
 
 def _davky(vety: list[Veta], max_znaku: int) -> list[list[Veta]]:
@@ -129,9 +163,9 @@ def _video(zakazka: Zakazka, druh_titulku: str) -> dict:
 def _zadani(davka: list[Veta], kontext: list[Veta], glosar: list[dict], rezim: str = "preklad",
             video: dict | None = None) -> str:
     def veta(v: Veta) -> dict:
-        zaklad = {"id": v.id, "mluvci": f"M{v.mluvci + 1}", "en": v.en_titulky or v.en,
+        zaklad = {"id": v.id, "mluvci": f"M{v.mluvci + 1}", "en": v.en_preklad,
                   "originál_trvá_s": round(v.delka, 1)}
-        if v.en_titulky:
+        if v.en_preklad != v.en:
             zaklad["prepis_stt"] = v.en
         if v.prirozena_s and rezim != "preklad":
             zaklad["dabing_teď_trvá_s"] = round(v.prirozena_s, 1)  # změřeno z vygenerovaného hlasu
@@ -142,7 +176,7 @@ def _zadani(davka: list[Veta], kontext: list[Veta], glosar: list[dict], rezim: s
         return {**zaklad, **oprava, **({"cil_znaku": v.cil_znaku} if rezim == "prodlouzit" else {})}
 
     data = {**({"video": video} if video else {}),
-            "kontext_predchozich_vet": [{"en": v.en_titulky or v.en, "cs": v.cs} for v in kontext],
+            "kontext_predchozich_vet": [{"en": v.en_preklad, "cs": v.cs} for v in kontext],
             "glosar": glosar, "vety": [veta(v) for v in davka]}
     return UVODY[rezim] + json.dumps(data, ensure_ascii=False)
 
@@ -169,8 +203,9 @@ class _Codex:
                                   vstupni_tokeny=self.zakazka.codex.get("vstupni_tokeny", 0) + self.vstup,
                                   vystupni_tokeny=self.zakazka.codex.get("vystupni_tokeny", 0) + self.vystup)
 
-    def dotaz(self, zadani: str) -> dict:
-        r = self.codex.turn([text(zadani)], schema=SCHEMA_PREKLAD, pokyny=pokyny(self.zakazka.jazyk, self.zakazka.jazyk_zdroje))
+    def dotaz(self, zadani: str, schema: dict = SCHEMA_PREKLAD, vlastni_pokyny: str | None = None) -> dict:
+        r = self.codex.turn([text(zadani)], schema=schema,
+                            pokyny=vlastni_pokyny or pokyny(self.zakazka.jazyk, self.zakazka.jazyk_zdroje))
         self.turny += 1
         posledni = (r.tokeny or {}).get("total") or {}
         self.vstup += int(posledni.get("inputTokens", 0))
@@ -227,6 +262,72 @@ def _klient(zakazka: Zakazka, log: Log):
     return _Offline(zakazka, log) if zakazka.prekladac == "offline" else _Codex(zakazka, log)
 
 
+CISLOVKY = re.compile(r"\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|"
+                      r"thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|"
+                      r"forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion)\b", re.I)
+
+
+def _duveryhodna(puvodne: str, opraveno: str) -> bool:
+    """Pojistka proti „opravám" z webu, které přidávají, co nezaznělo. Test 2026-09-28 (Meta
+    Connect): Codex správně opravil Zena, EssilorLuxottica, $249, Meta Quest 3, stream…, ale
+    „that hands first title" přepsal na „75 hand-first titles" a „most the most" gramaticky."""
+    cislice_p, cislice_o = re.sub(r"\D", "", puvodne), re.sub(r"\D", "", opraveno)
+    if CISLOVKY.search(puvodne) and cislice_o:
+        return True  # číslovka slovy → číslicemi („twelve ninety-nine" → „$1,299")
+    if cislice_o != cislice_p:
+        if cislice_p and not cislice_o.startswith(cislice_p):
+            return False  # jiné číslo, než zaznělo ($12.99 → $1,299.99 projde, 249 → 299 ne)
+        if not cislice_p and not re.search(r"[A-Z]", opraveno):
+            return False  # nové číslo mimo název produktu („Meta Quest 3" projde, „75 titles" ne)
+    podobnost = difflib.SequenceMatcher(a=puvodne.lower(), b=opraveno.lower()).ratio()
+    if re.search(r"[A-Z0-9$€£+]", opraveno):
+        return podobnost >= 0.3  # jméno, produkt, cena — ale ne úplně jiné slovo
+    # běžné slovo: jen záměna podobně znějícího (scream → stream), nic nedoplňovat
+    return len(puvodne.split()) == len(opraveno.split()) and podobnost >= 0.6
+
+
+def _over_jmena(klient: "_Codex", zakazka: Zakazka, log: Log, video: dict,
+                prubeh: Callable[[float, str], None]) -> int:
+    """Codex s vyhledáváním na webu opraví v textu originálu zkomolená jména, produkty a čísla
+    (Veta.en_opraveno). Selhání překlad nezastaví. Vrací počet oprav."""
+    for v in zakazka.vety:
+        v.en_opraveno = ""
+    opravy: list[dict] = []
+    try:
+        for davka in _davky(zakazka.vety, DAVKA_ZNAKU_OPRAVY):
+            prubeh(0.0, "Ověřuji jména a čísla na webu…")
+            data = {"video": video, "vety": [{"id": v.id, "text": v.en_preklad} for v in davka]}
+            vysledek = klient.dotaz("Oprav špatně slyšená jména a čísla v těchto větách.\n"
+                                    + json.dumps(data, ensure_ascii=False),
+                                    schema=SCHEMA_OPRAVY, vlastni_pokyny=POKYNY_OPRAVY)
+            opravy += vysledek.get("opravy", [])
+    except (RuntimeError, ValueError) as chyba:
+        log(f"Ověření jmen na webu selhalo — překládám bez něj ({chyba}).")
+        return 0
+    podle_id = {v.id: v for v in zakazka.vety}
+    provedene: list[str] = []
+    odmitnute: list[str] = []
+    for o in opravy:
+        v = podle_id.get(int(o.get("id", -1)))
+        puvodne, opraveno = (o.get("puvodne") or "").strip(), (o.get("opraveno") or "").strip()
+        if v is None or not puvodne or not opraveno or puvodne == opraveno or puvodne not in v.en_preklad:
+            continue  # oprava, která nesedí na text věty, by mohla přepsat něco jiného
+        if not _duveryhodna(puvodne, opraveno):
+            odmitnute.append(f"{puvodne} → {opraveno}")
+            continue
+        v.en_opraveno = v.en_preklad.replace(puvodne, opraveno, 1)
+        provedene.append(f"{puvodne} → {opraveno}")
+    if provedene:
+        log(f"Codex ověřil na webu a opravil {len(provedene)} míst: " + "; ".join(provedene[:15])
+            + ("…" if len(provedene) > 15 else ""))
+    else:
+        log("Codex ověřil jména a čísla na webu — nic k opravě.")
+    if odmitnute:
+        log(f"Odmítnuté opravy (přidávaly, co nezaznělo): {'; '.join(odmitnute[:8])}")
+    zakazka.uloz()
+    return len(provedene)
+
+
 def _pouzij(vysledek: dict, podle_id: dict[int, Veta], zkraceni: bool,
             jen_delsi: bool = False) -> None:
     for x in vysledek.get("vety", []):
@@ -258,6 +359,8 @@ def preloz(zakazka: Zakazka, log: Log, prubeh: Callable[[float, str], None]) -> 
         log(f"Text vět beru z titulků od autora videa; od našeho přepisu se liší u {lisi} vět "
             "— překladač uvidí obojí. Časy zůstávají z přepisu.")
     with _klient(zakazka, log) as klient:
+        if isinstance(klient, _Codex):  # LM Studio web nemá
+            _over_jmena(klient, zakazka, log, video, prubeh)
         for i, davka in enumerate(davky):
             prubeh(i / max(len(davky), 1), f"Překládám dávku {i + 1}/{len(davky)}…")
             prvni = davka[0].id
@@ -266,6 +369,12 @@ def preloz(zakazka: Zakazka, log: Log, prubeh: Callable[[float, str], None]) -> 
             vysledek = klient.dotaz(_zadani(davka, kontext, glosar, video=video))
             _pouzij(vysledek, podle_id, zkraceni=False)
             glosar = vysledek.get("glosar", glosar) or glosar
+            zakazka.uloz()
+        chybi = [v for v in vety if not v.cs]
+        if chybi:  # Codex občas větu vynechá (hlavně samotné „Um") — jeden pokus navíc
+            prubeh(0.9, f"Dopřekládám {len(chybi)} vynechaných vět…")
+            for davka in _davky(chybi, velikost):
+                _pouzij(klient.dotaz(_zadani(davka, [], glosar, video=video)), podle_id, zkraceni=False)
             zakazka.uloz()
         for kolo in range(2):
             dlouhe = [v for v in vety if len(v.vyslov or v.cs) > v.max_znaku * TOLERANCE]
@@ -276,10 +385,21 @@ def preloz(zakazka: Zakazka, log: Log, prubeh: Callable[[float, str], None]) -> 
                 _pouzij(klient.dotaz(_zadani(davka, [], glosar, "zkratit")), podle_id, zkraceni=True)
             zakazka.uloz()
         _prodluz(klient, zakazka, vety, glosar, prubeh)
-    chybi = [v.id for v in vety if not v.cs]
+    vyplne = [v for v in vety if not v.cs and _jen_vypln(v.en)]
+    chybi = [v.id for v in vety if not v.cs and not _jen_vypln(v.en)]
     if chybi:
         raise RuntimeError(f"Překlad chybí u vět {chybi[:10]}{'…' if len(chybi) > 10 else ''}")
+    if vyplne:  # mix je nechá bez dabingu (qa bez_dabingu): zní originál, „um" zní v každém jazyce stejně
+        log(f"{len(vyplne)} vět je jen výplň („{vyplne[0].en}“) — nedabuje se, zní originál.")
     zakazka.hotovo("preklad")
+
+
+VYPLNE = {"um", "uh", "uhm", "umm", "hmm", "mm", "ah", "oh", "er", "eh", "ehm"}
+
+
+def _jen_vypln(text: str) -> bool:
+    slova = titulky.normuj(text).split()
+    return bool(slova) and all(s in VYPLNE for s in slova)
 
 
 def _kratke(vety: list[Veta]) -> list[Veta]:
