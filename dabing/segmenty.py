@@ -1,7 +1,9 @@
 """Z přepisu (asr.json) a mluvčích (diar.json) udělá věty pro dabing.
 
 Věty se skládají ze souvislého seznamu slov: konec věty (. ? !) nebo pauza
-≥ 0,6 s. Věta delší než 12 s se rozdělí u čárky nebo nejdelší pauzy blízko
+≥ 0,6 s; kratší pauza řečníka (≥ 0,3 s) dělí souvětí na části, když je dosavadní část
+aspoň 1,2 s a 3 slova — čeština pak v té pauze také zmlkne (soulad s pusou; části téhož
+souvětí překladač překládá jako celek, viz translate.pokyny). Věta delší než 12 s se rozdělí u čárky nebo nejdelší pauzy blízko
 středu. Každé slovo dostane mluvčího podle největšího překryvu s jeho úsekem;
 věta se rozdělí, kde se mluvčí mění, a krátké přeskoky (šum diarizace) se připojí
 k sousedovi. Velmi krátké věty téhož mluvčího se slepí, aby TTS mělo kontext.
@@ -12,7 +14,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .config import CIL_VYPLNENI, MAX_POZICKA_S, REZERVA_ZA_VETOU_S, ZNAKU_ZA_S, ZNAKU_ZA_S_JINAK
+import numpy as np
+
+from .config import (CIL_VYPLNENI, MAX_POZICKA_S, REZERVA_ZA_VETOU_S, VAD_PRAH, ZNAKU_ZA_S,
+                     ZNAKU_ZA_S_JINAK)
 from .job import Veta, Zakazka
 
 MIN_BEH_SLOV = 2
@@ -22,6 +27,13 @@ MAX_SLEPENA_S = 12.0
 MAX_MEZERA_SLEPENI_S = 0.4
 CISTOTA_OKOLI_S = 0.3
 PAUZA_S = 0.6
+PAUZA_FRAZE_S = 0.3     # pauza řečníka uvnitř souvětí → nová část (když je ta dosavadní dost dlouhá)
+MIN_FRAZE_S = 1.2
+MIN_FRAZE_SLOV = 3
+# Mezera mezi slovy z ASR (časy po 0,08 s) ještě není pauza: řečník musí podle detektoru řeči
+# (vad.npy) opravdu zmlknout — jinak by čeština zmlkla, zatímco pusa mluví dál.
+MIN_TICHO_FRAZE_S = 0.1
+VAD_RAMEC_S = 512 / 16000
 MIN_KONEC_VETY_S = 1.5
 MAX_VETA_S = 12.0
 MIN_DIL_S = 2.0
@@ -29,8 +41,18 @@ KONCE_VET = tuple(".?!…")
 KONCE_VYPOVEDI = tuple(",;:—–")
 
 
-def _jednotky(slova: list[list]) -> list[list[list]]:
-    """Věty podle interpunkce a pauz; dlouhé se dál dělí v `_rozdel`."""
+def _ticho(vad: np.ndarray, od: float, do: float) -> float:
+    """Nejdelší souvislé ticho (podle detektoru řeči) mezi časy od–do, v s."""
+    nejdelsi = beh = 0
+    for p in vad[int(od / VAD_RAMEC_S):int(np.ceil(do / VAD_RAMEC_S))]:
+        beh = beh + 1 if p < VAD_PRAH else 0
+        nejdelsi = max(nejdelsi, beh)
+    return nejdelsi * VAD_RAMEC_S
+
+
+def _jednotky(slova: list[list], vad: np.ndarray | None = None) -> list[list[list]]:
+    """Věty podle interpunkce a pauz; dlouhé se dál dělí v `_rozdel`. Kratší pauza uvnitř
+    souvětí dělí jen s detektorem řeči (bez vad.npy se chová jako dřív)."""
     jednotky: list[list[list]] = []
     aktualni: list[list] = []
     for i, s in enumerate(slova):
@@ -38,7 +60,10 @@ def _jednotky(slova: list[list]) -> list[list[list]]:
         dalsi = slova[i + 1] if i + 1 < len(slova) else None
         mezera = dalsi[1] - s[2] if dalsi else float("inf")
         delka = s[2] - aktualni[0][1]
-        if dalsi is None or mezera >= PAUZA_S or (s[0].endswith(KONCE_VET) and delka >= MIN_KONEC_VETY_S):
+        fraze = (mezera >= PAUZA_FRAZE_S and delka >= MIN_FRAZE_S and len(aktualni) >= MIN_FRAZE_SLOV
+                 and dalsi is not None and vad is not None
+                 and _ticho(vad, s[2], dalsi[1]) >= MIN_TICHO_FRAZE_S)
+        if dalsi is None or mezera >= PAUZA_S or fraze or (s[0].endswith(KONCE_VET) and delka >= MIN_KONEC_VETY_S):
             jednotky.append(aktualni)
             aktualni = []
     vysledek: list[list[list]] = []
@@ -126,8 +151,11 @@ def sestav(zakazka: Zakazka) -> list[Veta]:
     if zakazka.pocet_mluvcich == 1:
         useky = []
 
+    vad_cesta = slozka / "vad.npy"
+    vad = np.load(vad_cesta).astype(np.float32) if vad_cesta.exists() else None
+
     kusy: list[tuple[int, list[list]]] = []
-    for slova in _jednotky(asr):
+    for slova in _jednotky(asr, vad):
         mluvci = [_mluvci_slova(s[1], s[2], useky) for s in slova]
         kusy.extend(_behy(slova, mluvci))
 
@@ -138,7 +166,13 @@ def sestav(zakazka: Zakazka) -> list[Veta]:
             pm, psl = slepene[-1]
             mezera = sl[0][1] - psl[-1][2]
             kratka = (psl[-1][2] - psl[0][1] < KRATKA_VETA_S) or (sl[-1][2] - sl[0][1] < KRATKA_VETA_S)
-            if (pm == m and kratka and mezera <= MAX_MEZERA_SLEPENI_S
+            # krátký zbytek za pauzou uvnitř souvětí (předchozí část bez koncové interpunkce) slepit
+            # až do PAUZA_S (dělení v pauze ≥ 0,3 s by jinak nechalo mikro-větu) a krátký běh
+            # připojit i s jiným mluvčím (šum diarizace, jako `_behy` uvnitř jednotky)
+            fraze = not psl[-1][0].endswith(KONCE_VET) and mezera < PAUZA_S
+            maly_beh = len(sl) < MIN_BEH_SLOV or sl[-1][2] - sl[0][1] < MIN_BEH_S
+            if ((pm == m or (fraze and maly_beh)) and kratka
+                    and mezera <= (PAUZA_S if fraze else MAX_MEZERA_SLEPENI_S)
                     and sl[-1][2] - psl[0][1] <= MAX_SLEPENA_S):
                 slepene[-1] = (pm, psl + sl)
                 continue

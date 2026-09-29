@@ -171,6 +171,14 @@ class Pipeline:
         self._krok("asr_local", z, "prepis")
         if z.pocet_mluvcich != 1:
             self._krok("diar", z, "mluvci")
+        # detektor řeči už před skládáním vět: souvětí se dělí jen v pauzách, kde řečník opravdu
+        # zmlkne (segmenty._jednotky). Hotový se v nadabuj přeskočí; selhání nevadí (dělí se jako dřív).
+        try:
+            self._krok("vad", z, "vety")
+        except Zruseno:
+            raise
+        except RuntimeError as chyba:
+            self.log(f"Detekce řeči selhala, věty se dělí jen podle přepisu: {chyba}")
         self._kontrola()
         if "vety" not in z.kroky or not z.vety or self._novejsi_nez_vety(z):
             self._faze("vety")(0.5, "Skládám věty…")

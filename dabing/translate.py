@@ -75,6 +75,13 @@ Dostaneš očíslované věty z videa (mluvčí, text originálu v poli `en` a l
   úsporněji, než je cíl: když originál mluví pomalu, zvol plnější, přirozenou formulaci (ne vatu
   ani nové informace), ať po větě nezůstane ticho, zatímco řečník na obraze ještě mluví. Limit
   nikdy nepřekračuj; když se obsah nevejde, zkrať vatu a opakování.
+- Věty jsou dělené podle pauz řečníka, i uprostřed souvětí: věta bez koncové interpunkce (. ? !)
+  pokračuje ve větě s id o 1 vyšším (téhož mluvčího). Takové navazující věty přelož jako jedno
+  plynulé souvětí rozdělené na stejné části: každá česká část musí obsahově odpovídat své části
+  originálu a vejít se do jejího času (řečník mezi nimi na obraze zmlkne, dabing má zmlknout s ním).
+  Neslučuj je a obsah mezi nimi nepřesouvej, pokud to čeština snese. Pole `predchozi_cast`
+  a `nasledujici_cast` ukazují sousední část souvětí, která v zadání není — jsou jen ke čtení:
+  svou část uprav tak, aby na ně gramaticky navazovala, a nic z nich nepřebírej.
 - Text originálu je automatický přepis řeči a může obsahovat špatně slyšená slova (např.
   „scream" místo „screen", „MetaQui" místo „Meta Quest 3", „2:49" místo „$249").
   Překládej podle zjevného smyslu v kontextu, ne podle chyby přepisu.
@@ -132,9 +139,12 @@ neopravuj. Vrať JSON podle schématu (prázdný seznam, když není co opravit)
 
 
 def _davky(vety: list[Veta], max_znaku: int) -> list[list[Veta]]:
+    """Dávky do max_znaku; části jednoho souvětí (věta bez koncové interpunkce pokračuje v další)
+    se nerozdělí do dvou dávek, dokud dávka nepřesáhne 1,5× limit."""
     davky, aktualni, znaky = [], [], 0
     for v in vety:
-        if aktualni and znaky + len(v.en) > max_znaku:
+        rozdelene_souveti = bool(aktualni) and not aktualni[-1].en.rstrip().endswith(tuple(".?!…"))
+        if aktualni and znaky + len(v.en) > max_znaku * (1.5 if rozdelene_souveti else 1.0):
             davky.append(aktualni)
             aktualni, znaky = [], 0
         aktualni.append(v)
@@ -146,11 +156,14 @@ def _davky(vety: list[Veta], max_znaku: int) -> list[list[Veta]]:
 
 UVODY = {
     "preklad": "Přelož tyto věty.\n",
-    "zkratit": "ZKRAŤ tyto překlady tak, aby se vešly do limitu znaků. Zachovej hlavní význam.\n",
+    "zkratit": ("ZKRAŤ tyto překlady tak, aby se vešly do limitu znaků. Zachovej hlavní význam. "
+                "Věta, která je jen částí souvětí (má `predchozi_cast` nebo `nasledujici_cast`), "
+                "zůstane částí, která na sousedy navazuje.\n"),
     "prodlouzit": ("PRODLUŽ tyto překlady: jsou výrazně kratší, než jak dlouho řečník na obraze mluví, "
                    "a po české větě by zůstalo ticho. Přeformuluj je plněji a přirozeněji, jak by to "
-                   "řekl dabér (celými větami, bez zkratkovitosti), a přibliž se `cil_znaku`. "
-                   "Nepřidávej nové informace ani vatu a nepřekroč `limit_znaku`.\n"),
+                   "řekl dabér (bez zkratkovitosti; část souvětí jako přirozeně navazující část), "
+                   "a přibliž se `cil_znaku`. Nepřidávej nové informace ani vatu a nepřekroč "
+                   "`limit_znaku`.\n"),
 }
 
 
@@ -160,11 +173,31 @@ def _video(zakazka: Zakazka, druh_titulku: str) -> dict:
             **({"titulky": druh_titulku} if druh_titulku else {})}
 
 
+KONCE_VET = tuple(".?!…")
+
+
+def _sousedi(v: Veta, podle_id: dict[int, Veta], v_davce: set[int]) -> dict:
+    """Sousední části téhož souvětí, které v dávce nejsou (zkracování, prodlužování a dopřeklad
+    posílají jen vybrané věty) — ke čtení, aby česká část gramaticky navazovala."""
+    pred, dal = podle_id.get(v.id - 1), podle_id.get(v.id + 1)
+    vysledek = {}
+    if (pred and pred.id not in v_davce and pred.mluvci == v.mluvci
+            and not pred.en.rstrip().endswith(KONCE_VET)):
+        vysledek["predchozi_cast"] = {"en": pred.en_preklad, "cs": pred.cs}
+    if (dal and dal.id not in v_davce and dal.mluvci == v.mluvci
+            and not v.en.rstrip().endswith(KONCE_VET)):
+        vysledek["nasledujici_cast"] = {"en": dal.en_preklad, "cs": dal.cs}
+    return vysledek
+
+
 def _zadani(davka: list[Veta], kontext: list[Veta], glosar: list[dict], rezim: str = "preklad",
-            video: dict | None = None) -> str:
+            video: dict | None = None, vsechny: list[Veta] | None = None) -> str:
+    podle_id = {v.id: v for v in vsechny or []}
+    v_davce = {v.id for v in davka}
+
     def veta(v: Veta) -> dict:
         zaklad = {"id": v.id, "mluvci": f"M{v.mluvci + 1}", "en": v.en_preklad,
-                  "originál_trvá_s": round(v.delka, 1)}
+                  "originál_trvá_s": round(v.delka, 1), **_sousedi(v, podle_id, v_davce)}
         if v.en_preklad != v.en:
             zaklad["prepis_stt"] = v.en
         if v.prirozena_s and rezim != "preklad":
@@ -374,7 +407,7 @@ def preloz(zakazka: Zakazka, log: Log, prubeh: Callable[[float, str], None]) -> 
         if chybi:  # Codex občas větu vynechá (hlavně samotné „Um") — jeden pokus navíc
             prubeh(0.9, f"Dopřekládám {len(chybi)} vynechaných vět…")
             for davka in _davky(chybi, velikost):
-                _pouzij(klient.dotaz(_zadani(davka, [], glosar, video=video)), podle_id, zkraceni=False)
+                _pouzij(klient.dotaz(_zadani(davka, [], glosar, video=video, vsechny=zakazka.vety)), podle_id, zkraceni=False)
             zakazka.uloz()
         for kolo in range(2):
             dlouhe = [v for v in vety if len(v.vyslov or v.cs) > v.max_znaku * TOLERANCE]
@@ -382,7 +415,7 @@ def preloz(zakazka: Zakazka, log: Log, prubeh: Callable[[float, str], None]) -> 
                 break
             prubeh(0.95, f"Zkracuji {len(dlouhe)} dlouhých vět (kolo {kolo + 1})…")
             for davka in _davky(dlouhe, velikost):
-                _pouzij(klient.dotaz(_zadani(davka, [], glosar, "zkratit")), podle_id, zkraceni=True)
+                _pouzij(klient.dotaz(_zadani(davka, [], glosar, "zkratit", vsechny=zakazka.vety)), podle_id, zkraceni=True)
             zakazka.uloz()
         _prodluz(klient, zakazka, vety, glosar, prubeh)
     vyplne = [v for v in vety if not v.cs and _jen_vypln(v.en)]
@@ -417,7 +450,7 @@ def _prodluz(klient, zakazka: Zakazka, vety: list[Veta], glosar: list[dict],
     pred = {v.id: v.vyslov or v.cs for v in kratke}
     velikost = DAVKA_ZNAKU_OFFLINE if zakazka.prekladac == "offline" else DAVKA_ZNAKU_CODEX
     for davka in _davky(kratke, velikost):
-        _pouzij(klient.dotaz(_zadani(davka, [], glosar, "prodlouzit")), podle_id,
+        _pouzij(klient.dotaz(_zadani(davka, [], glosar, "prodlouzit", vsechny=zakazka.vety)), podle_id,
                 zkraceni=False, jen_delsi=True)
     zakazka.uloz()
     return sum((v.vyslov or v.cs) != pred[v.id] for v in kratke)
@@ -446,7 +479,7 @@ def prodluz(zakazka: Zakazka, vety: list[Veta], log: Log) -> None:
     try:
         with _klient(zakazka, log) as klient:
             for davka in _davky(vety, velikost):
-                _pouzij(klient.dotaz(_zadani(davka, [], [], "prodlouzit")), podle_id,
+                _pouzij(klient.dotaz(_zadani(davka, [], [], "prodlouzit", vsechny=zakazka.vety)), podle_id,
                         zkraceni=False, jen_delsi=True)
     except RuntimeError as chyba:
         log(f"Pozor: krátké věty se nepodařilo prodloužit ({chyba}).")
@@ -461,5 +494,5 @@ def zkrat(zakazka: Zakazka, vety: list[Veta], log: Log) -> None:
     velikost = DAVKA_ZNAKU_OFFLINE if zakazka.prekladac == "offline" else DAVKA_ZNAKU_CODEX
     with _klient(zakazka, log) as klient:
         for davka in _davky(vety, velikost):
-            _pouzij(klient.dotaz(_zadani(davka, [], [], "zkratit")), podle_id, zkraceni=True)
+            _pouzij(klient.dotaz(_zadani(davka, [], [], "zkratit", vsechny=zakazka.vety)), podle_id, zkraceni=True)
     zakazka.uloz()

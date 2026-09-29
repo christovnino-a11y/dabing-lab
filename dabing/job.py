@@ -42,6 +42,7 @@ class Veta:
     prirozena_s: float = 0.0        # délka bez vynucené délky
     vysledna_s: float = 0.0
     vynucena_s: float | None = None # duration předaná OmniVoice
+    rezie_s: float = 0.0            # úvodní šum/ticho, které ořez z přirozené verze uřízl (přidá se k duration)
     pomer: float = 0.0              # přirozená délka / slot
     identita: float | None = None   # podobnost ECAPA s hlavní referencí mluvčího
     seed: int = 0                   # náhoda generování (hlídač identity ho při vybočení zvýší)

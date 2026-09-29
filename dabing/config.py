@@ -40,8 +40,9 @@ MODEL_ECAPA = "speechbrain/spkrec-ecapa-voxceleb"
 ZNAKU_ZA_S = {"cs": 17.5, "sk": 17.5, "de": 17.0, "en": 17.0}
 ZNAKU_ZA_S_JINAK = 17.0     # ostatní jazyky odhadem; délky se po TTS stejně dolaďují
 # Překlad má vyplnit zhruba tolik času, kolik mluví originál (řečník na obraze
-# mluví — dlouhé ticho po krátké české větě působí jako chyba).
-CIL_VYPLNENI = 0.9
+# mluví — dlouhé ticho po krátké české větě působí jako chyba). Soulad s pusou změřený
+# 2026-09-29: čeština byla v mediánu o 0,5 s kratší než originál → cíl 0,95 (dřív 0,9).
+CIL_VYPLNENI = 0.95
 
 # Jazyky dabingu a originálu (názvy, kotvy, kódy stop) jsou v dabing/jazyky.py.
 JAZYKY = {j.nazev: kod for kod, j in DABING.items()}                   # nabídka → kód dabingu
@@ -62,7 +63,8 @@ KOTVA_MIN_PODOBNOST = 0.30  # méně = kotva nezní jako mluvčí (krátká refe
 ZRYCHLENI_BEZ_OBAV = 1.15   # do tohoto poměru stačí nativní duration OmniVoice
 MIN_RYCHLOST = 0.85         # nikdy rychleji než 1/0,85 přirozené řeči
 MAX_ZPOMALENI = 0.80        # krátkou větu zpomalit nejvýš na 0,8× přirozeného tempa
-PRAH_KRATKE_VETY = 0.85     # zpomalovat, když hlas trvá méně než 85 % originálu
+PRAH_KRATKE_VETY = 0.97     # zpomalit na celou délku originálu, když hlas trvá méně než 97 %
+                            # (česká řeč má pokrýt celý čas, kdy se řečníkovi hýbe pusa; dřív 85 %)
 REZERVA_ZA_VETOU_S = 0.05   # tolik ticha nechat před další větou
 MAX_POZICKA_S = 1.0         # kolik si věta smí půjčit z mezery za sebou
 

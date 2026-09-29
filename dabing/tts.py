@@ -37,7 +37,7 @@ KROKY = 32
 IDENTITA_ODCHYLKA = 0.12
 IDENTITA_MINIMUM = 0.35
 TIMEOUT_VETY_S = 300.0
-PRAH_PRODLOUZENI = 0.75   # hlas kratší než 75 % originálu → nechat text přeformulovat plněji
+PRAH_PRODLOUZENI = 0.85   # hlas kratší než 85 % originálu → nechat text přeformulovat plněji
 MIN_PRODLOUZENI_S = 2.0   # u kratších vět se ticho neřeší (stačí zpomalení)
 
 
@@ -126,25 +126,49 @@ class Worker:
         self.proces = None
 
 
-def _orizni_ticho(cesta: Path) -> float:
-    """Ořízne ticho na začátku a konci (−45 dB pod špičkou, 20 ms rezerva). Vrací délku v s."""
+NASTUP_DB = -25.0      # první hláska: rámec nad −25 dB pod špičkou věty
+NABEH_S = 0.10         # tolik před první hláskou nechat
+SYKAVKA_DB = -48.0     # sykavka „s"/„š"/„f" před první hláskou: rámec nad −48 dB…
+SYKAVKA_PODIL = 0.6    # …s více než 60 % energie nad 3 kHz (nádech a šum mají spektrum rozprostřené)
+SYKAVKA_MEZERA = 8     # rámců (80 ms): závěr „t"/„p"/„k" mezi sykavkou a samohláskou („St-", „Sp-")
+
+
+def _orizni_ticho(cesta: Path) -> tuple[float, float]:
+    """Ořízne ticho na konci (−45 dB pod špičkou, 30 ms rezerva) a na začátku vše před první
+    hláskou kromě NABEH_S — tichá sykavka těsně před ní („Sto", „Stačí") zůstane celá.
+    OmniVoice často začíná 0,3–0,5 s tichého šumu či nádechu kolem −35 dB; dřívější −45dB
+    práh ho nechával a čeština pak nastupovala o třetinu sekundy později než pusa řečníka
+    (změřeno 2026-09-29, rozhovor Liquid). Vrací (délka po ořezu, kolik se uřízlo) v s."""
     x, sr = sf.read(cesta, dtype="float32")
     if x.size == 0:
-        return 0.0
+        return 0.0, 0.0
+    mono = x if x.ndim == 1 else x.mean(axis=1)
     ramec = int(0.01 * sr)
-    n = len(x) // ramec
+    n = len(mono) // ramec
     if n < 3:
-        return len(x) / sr
-    energie = np.sqrt((x[: n * ramec].reshape(n, ramec) ** 2).mean(axis=1) + 1e-12)
-    prah = energie.max() * 10 ** (-45 / 20)
-    hlas = np.flatnonzero(energie > prah)
-    if hlas.size == 0:
-        return len(x) / sr
-    a = max(0, (hlas[0] - 2) * ramec)
+        return len(x) / sr, 0.0
+    ramce = mono[: n * ramec].reshape(n, ramec)
+    energie = np.sqrt((ramce ** 2).mean(axis=1) + 1e-12)
+    hlas = np.flatnonzero(energie > energie.max() * 10 ** (-45 / 20))
+    nastup = np.flatnonzero(energie > energie.max() * 10 ** (NASTUP_DB / 20))
+    if hlas.size == 0 or nastup.size == 0:
+        return len(x) / sr, 0.0
+    spektrum = np.abs(np.fft.rfft(ramce, axis=1)) ** 2
+    vysoke = spektrum[:, np.fft.rfftfreq(ramec, 1 / sr) > 3000].sum(axis=1) / (spektrum.sum(axis=1) + 1e-20)
+    sykavka = (energie > energie.max() * 10 ** (SYKAVKA_DB / 20)) & (vysoke > SYKAVKA_PODIL)
+    i, mezera, prvni = nastup[0] - 1, 0, nastup[0]
+    while i >= 0 and mezera <= SYKAVKA_MEZERA:
+        if sykavka[i]:
+            prvni, mezera = i, 0
+        else:
+            mezera += 1
+        i -= 1
+    a = max(0, hlas[0] * ramec - 2 * ramec,
+            min(nastup[0] * ramec - int(NABEH_S * sr), (prvni - 2) * ramec))
     b = min(len(x), (hlas[-1] + 3) * ramec)
     if a > 0 or b < len(x):
         sf.write(cesta, x[a:b], sr, subtype="FLOAT")
-    return (b - a) / sr
+    return (b - a) / sr, (len(x) - (b - a)) / sr
 
 
 def slot(zakazka: Zakazka, i: int) -> float:
@@ -172,13 +196,20 @@ class Hlas:
         otisk = otisk_tts(v, self.z.jazyk, KROKY, reference.stat().st_mtime)
         cil = self.z.cesta(f"tts/veta_{v.id:04d}.wav")
         if v.tts_otisk == otisk and cil.exists():
-            return v.vysledna_s if vynucena else v.prirozena_s
+            delka, _ = _orizni_ticho(cil)  # cache ze starší verze ořezu dořízne (jinak beze změny)
+            if vynucena:
+                v.vysledna_s = delka
+            else:
+                v.prirozena_s = v.vysledna_s = delka
+            return delka
         cil.parent.mkdir(parents=True, exist_ok=True)
         zadani = {"op": "synth", "id": v.id, "text": v.vyslov or v.cs, "jazyk": self.z.jazyk,
                   "ref_audio": str(reference), "ref_text": refs.text_reference(self.z, v.reference),
                   "kroky": KROKY, "seed": v.seed, "vystup": str(cil)}
         if vynucena:
-            zadani["duration"] = round(vynucena, 3)
+            # duration OmniVoice počítá i úvodní šum/nádech, který ořez odstraní — přidat ho, ať
+            # věta po ořezu opravdu trvá `vynucena` (jinak vycházela v mediánu o 0,3–0,6 s kratší)
+            zadani["duration"] = round(vynucena + v.rezie_s, 3)
         for pokus in range(2):
             try:
                 odpoved = self.worker.dotaz(zadani)
@@ -195,13 +226,14 @@ class Hlas:
                 raise RuntimeError(f"Věta {v.id} se nepodařila: {odpoved.get('chyba')}")
         else:
             raise RuntimeError(f"Věta {v.id}: worker opakovaně spadl")
-        delka = _orizni_ticho(cil)
+        delka, orez = _orizni_ticho(cil)
         v.tts = str(cil.relative_to(self.z.slozka))
         v.tts_otisk = otisk
         if vynucena:
             v.vysledna_s = delka
         else:
             v.prirozena_s = v.vysledna_s = delka
+            v.rezie_s = round(orez, 3)
         return delka
 
     def _kotva(self, m: int, stala: str) -> str | None:
@@ -230,7 +262,7 @@ class Hlas:
                 if not odpoved.get("ok"):
                     self.log(f"Kotva M{m + 1} (pokus {seed}): {odpoved.get('chyba')}")
                     continue
-                delka = _orizni_ticho(pokus)
+                delka, _ = _orizni_ticho(pokus)
                 podobnost = self.worker.dotaz({"op": "identita", "a": str(pokus), "b": str(zdroj)},
                                               timeout=120.0).get("podobnost") or 0.0
             except WorkerSpadl as chyba:
@@ -388,7 +420,7 @@ class Hlas:
             v.qa = [q for q in v.qa if q not in ("zrychleno", "presah", "zpomaleno")]
             if v.prirozena_s < v.delka * PRAH_KRATKE_VETY:
                 # krátká věta: mírně zpomalit, ať řeč pokryje čas, kdy mluví originál
-                cil = min(v.delka * 0.95, v.prirozena_s / MAX_ZPOMALENI)
+                cil = min(v.delka, v.prirozena_s / MAX_ZPOMALENI)  # celá délka originálu (pusa)
                 if cil > v.prirozena_s * 1.03:
                     self._synth(v, cil)
                     v.qa.append("zpomaleno")
