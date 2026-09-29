@@ -24,7 +24,8 @@ from dabing.tts import Zruseno
 REZIMY = {"S Codexem (nejlepší překlad)": "codex", "Plně lokální (nic neodchází z Macu)": "offline"}
 MLUVCI = ["Automaticky", "1", "2", "3", "4", "5", "6"]
 QA_POPISY = {"zrychleno": "mírně zrychleno", "zpomaleno": "mírně zpomaleno", "presah": "PŘESAH — zkrať text",
-             "identita": "hlas opraven stálou referencí",
+             "identita": "hlas opraven novým pokusem",
+             "hlas_ujel": "HLAS NESEDÍ — poslechni",
              "nesrozumitelne": "ŠPATNĚ SROZUMITELNÉ — poslechni",
              "bez_dabingu": "bez překladu — zní originál"}
 SLOUPCE = ["#", "Čas", "Mluvčí", "Originál", "Překlad (lze upravit)", "Délka hlasu", "Kontrola"]

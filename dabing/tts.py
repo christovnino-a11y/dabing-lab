@@ -3,11 +3,11 @@
 Postup (kvalita před rychlostí):
 1. Každá věta se vygeneruje přirozeně s referencí „věta" (emoce z originálu)
    nebo „mluvčí".
-2. Hlídač identity: podobnost ECAPA výstupu se stálou referencí mluvčího. Věty,
-   které z řady mluvčího vybočují, se přegenerují se stálou referencí.
-3. Délka: co se vejde do slotu (věta + půjčka z mezery za ní), zůstane. Do 1,15×
+2. Délka: co se vejde do slotu (věta + půjčka z mezery za ní), zůstane. Do 1,15×
    dostane OmniVoice `duration` = slot. Delší věty Codex dávkově zkrátí a pak
    se znovu měří. Nikdy rychleji než 1/0,85 přirozené řeči, zbytek dostane QA přesah.
+3. Hlídač identity až na hotových větách: podobnost ECAPA s kotvou (stálou referencí)
+   mluvčího. Věty, které z řady mluvčího vybočují, se namluví znovu a zůstane lepší pokus.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import shutil
 import subprocess
 import threading
 import time
@@ -39,6 +40,19 @@ IDENTITA_MINIMUM = 0.35
 TIMEOUT_VETY_S = 300.0
 PRAH_PRODLOUZENI = 0.85   # hlas kratší než 85 % originálu → nechat text přeformulovat plněji
 MIN_PRODLOUZENI_S = 2.0   # u kratších vět se ticho neřeší (stačí zpomalení)
+MIN_TAKE_S = 0.1          # kratší take po ořezu = prázdný zvuk od OmniVoice
+POKUSY_PRAZDNEHO_TAKE = 3  # kolikrát zkusit jiný seed (poslední bez ořezu OmniVoice), než věta zůstane bez hlasu
+OPRAVY_PRESTRELU = 2      # kolikrát přegenerovat vynucenou větu, která vyšla mimo meze délky
+TOLERANCE_PRESAHU_S = 0.02  # odchylka od mezí, která se ještě neřeší (slot už má rezervu 0,05 s)
+# Úseky kroku „hlas" na ukazateli průběhu (0–1). Kroky po namluvení přegenerují i stovky vět
+# (33min video 2026-09-29: prodloužení 243 vět, doladění ~260) — každý má vlastní úsek a hlásí
+# se po větách, jinak ukazatel desítky minut stojí na jednom čísle.
+USEK_NAMLUVENI = (0.0, 0.55)
+USEK_ZKRACENI = (0.55, 0.62)
+USEK_PRODLOUZENI = (0.62, 0.75)
+USEK_DOLADENI = (0.75, 0.88)
+USEK_IDENTITY = (0.88, 1.0)
+POKUSY_IDENTITY = 2       # kolikrát znovu namluvit větu, které ujel hlas (zůstane lepší pokus)
 
 
 class WorkerSpadl(RuntimeError):
@@ -197,43 +211,59 @@ class Hlas:
         cil = self.z.cesta(f"tts/veta_{v.id:04d}.wav")
         if v.tts_otisk == otisk and cil.exists():
             delka, _ = _orizni_ticho(cil)  # cache ze starší verze ořezu dořízne (jinak beze změny)
-            if vynucena:
-                v.vysledna_s = delka
-            else:
-                v.prirozena_s = v.vysledna_s = delka
-            return delka
+            if delka >= MIN_TAKE_S:  # prázdný take z dřívějška se generuje znovu
+                if vynucena:
+                    v.vysledna_s = delka
+                else:
+                    v.prirozena_s = v.vysledna_s = delka
+                return delka
         cil.parent.mkdir(parents=True, exist_ok=True)
-        zadani = {"op": "synth", "id": v.id, "text": v.vyslov or v.cs, "jazyk": self.z.jazyk,
-                  "ref_audio": str(reference), "ref_text": refs.text_reference(self.z, v.reference),
-                  "kroky": KROKY, "seed": v.seed, "vystup": str(cil)}
-        if vynucena:
-            # duration OmniVoice počítá i úvodní šum/nádech, který ořez odstraní — přidat ho, ať
-            # věta po ořezu opravdu trvá `vynucena` (jinak vycházela v mediánu o 0,3–0,6 s kratší)
-            zadani["duration"] = round(vynucena + v.rezie_s, 3)
-        for pokus in range(2):
-            try:
-                odpoved = self.worker.dotaz(zadani)
-            except WorkerSpadl as chyba:
-                self.log(f"Věta {v.id}: {chyba} — restartuji worker")
-                self.worker.zabij()
-                self.worker.start()
-                zadani["kroky"] = 16
-                continue
-            if odpoved.get("ok"):
+        for pokus_take in range(POKUSY_PRAZDNEHO_TAKE):
+            zadani = {"op": "synth", "id": v.id, "text": v.vyslov or v.cs, "jazyk": self.z.jazyk,
+                      "ref_audio": str(reference), "ref_text": refs.text_reference(self.z, v.reference),
+                      "kroky": KROKY, "seed": v.seed, "vystup": str(cil)}
+            if vynucena:
+                # duration OmniVoice počítá i úvodní šum/nádech, který ořez odstraní — přidat ho, ať
+                # věta po ořezu opravdu trvá `vynucena` (jinak vycházela v mediánu o 0,3–0,6 s kratší)
+                zadani["duration"] = round(vynucena + v.rezie_s, 3)
+            if pokus_take == POKUSY_PRAZDNEHO_TAKE - 1:
+                # poslední pokus bez ořezu ticha v OmniVoice (pevný práh −50 dBFS): tiše vyslovené
+                # slovo („alebo") uřízl celé u všech seedů i s pevnou délkou; náš ořez je relativní
+                zadani["orez"] = False
+            for pokus in range(2):
+                try:
+                    odpoved = self.worker.dotaz(zadani)
+                except WorkerSpadl as chyba:
+                    self.log(f"Věta {v.id}: {chyba} — restartuji worker")
+                    self.worker.zabij()
+                    self.worker.start()
+                    zadani["kroky"] = 16
+                    continue
+                if odpoved.get("ok"):
+                    break
+                self.log(f"Věta {v.id}: {odpoved.get('chyba')}")
+                if pokus == 1:
+                    raise RuntimeError(f"Věta {v.id} se nepodařila: {odpoved.get('chyba')}")
+            else:
+                raise RuntimeError(f"Věta {v.id}: worker opakovaně spadl")
+            delka, orez = _orizni_ticho(cil)
+            if delka >= MIN_TAKE_S:
                 break
-            self.log(f"Věta {v.id}: {odpoved.get('chyba')}")
-            if pokus == 1:
-                raise RuntimeError(f"Věta {v.id} se nepodařila: {odpoved.get('chyba')}")
+            # OmniVoice u jednoslovných vět („že", „keď", „alebo") občas vrátí prázdný zvuk
+            # (2026-09-29: 5 z 330 vět) — věta by v dabingu chyběla. Zkusit jiný seed.
+            self.log(f"Věta {v.id}: OmniVoice vrátil prázdný zvuk — zkouším jiný pokus")
+            v.seed += 1
+            otisk = otisk_tts(v, self.z.jazyk, KROKY, reference.stat().st_mtime)
         else:
-            raise RuntimeError(f"Věta {v.id}: worker opakovaně spadl")
-        delka, orez = _orizni_ticho(cil)
+            self.log(f"Věta {v.id}: ani {POKUSY_PRAZDNEHO_TAKE} pokusy nedaly zvuk — zůstane bez hlasu")
         v.tts = str(cil.relative_to(self.z.slozka))
         v.tts_otisk = otisk
         if vynucena:
             v.vysledna_s = delka
         else:
             v.prirozena_s = v.vysledna_s = delka
-            v.rezie_s = round(orez, 3)
+            if zadani.get("orez", True):  # bez ořezu OmniVoice by „režie" zahrnula i ticho na konci
+                v.rezie_s = round(orez, 3)
         return delka
 
     def _kotva(self, m: int, stala: str) -> str | None:
@@ -292,38 +322,117 @@ class Hlas:
                  f"{'' if zdravy else ', žádný pokus nebyl úplně v pořádku'})")
         return str(cil.relative_to(self.z.slozka))
 
+    def _po_vetach(self, polozky: list, prubeh: Prubeh, usek: tuple[float, float], text: str):
+        """Projde položky a každých 5 nahlásí průběh v úseku `usek` s odhadem zbývajícího času
+        a uloží zakázku (ukazatel nestojí a pád neztratí změřené délky)."""
+        od, do = usek
+        start = time.monotonic()
+        for i, polozka in enumerate(polozky):
+            yield polozka
+            if i % 5 == 4 or i == len(polozky) - 1:
+                zbyva = (time.monotonic() - start) / (i + 1) * (len(polozky) - i - 1)
+                prubeh(od + (do - od) * (i + 1) / len(polozky),
+                       f"{text} {i + 1}/{len(polozky)} (zbývá ~{zbyva / 60:.0f} min)")
+                self.z.uloz()
+
+    def _podobnost(self, v: Veta, srovnat: str) -> float | None:
+        try:
+            odpoved = self.worker.dotaz({"op": "identita", "a": str(self.z.slozka / v.tts),
+                                         "b": str(self.z.slozka / srovnat)}, timeout=120.0)
+        except WorkerSpadl as chyba:  # kontrola hlasu nesmí shodit hotový dabing
+            self.log(f"Věta {v.id}: měření hlasu selhalo ({chyba}) — restartuji worker")
+            self.worker.zabij()
+            self.worker.start()
+            return None
+        return odpoved.get("podobnost") if odpoved.get("ok") else None
+
+    def _snimek(self, v: Veta, soubor: Path) -> dict:
+        """Záloha hotového take (zvuk + pole věty), ať jde vrátit, když nový pokus dopadne hůř."""
+        shutil.copyfile(self.z.slozka / v.tts, soubor)
+        return {k: list(getattr(v, k)) if k == "qa" else getattr(v, k)
+                for k in ("seed", "reference", "druh_reference", "tts_otisk", "vynucena_s", "vysledna_s",
+                          "prirozena_s", "rezie_s", "pomer", "qa", "identita")}
+
     def _identita(self, prubeh: Prubeh) -> None:
-        """Věty, které hlasem vybočují z řady mluvčího, přegenerovat (kotvu jiným pokusem,
-        emoční referenci kotvou nebo stálou referencí)."""
-        for m, stala in self.mluvci_ref.items():
+        """Hlídač identity až na hotových větách. Doladění délek přegeneruje stovky vět a hlas
+        nového pokusu může ujet (2026-09-29: 54 z 275 vět pplk. Knapka, třeba 0,79 → 0,31, když
+        se hlídalo před doladěním). Věta, která hlasem vybočuje z řady mluvčího, se namluví znovu
+        (jiný seed; emoční reference → kotva nebo stálá), znovu dostane délku do slotu a zůstane
+        lepší pokus — nejdřív bez přesahu do další věty, pak podle podobnosti."""
+        indexy = {v.id: i for i, v in enumerate(self.z.vety)}
+        mluvci = list(self.mluvci_ref.items())
+        od, do = USEK_IDENTITY
+        for k, (m, stala) in enumerate(mluvci):
             kotva = self.kotvy.get(m)
-            vety = [v for v in self.z.vety
-                    if v.mluvci == m and v.druh_reference in ("veta", "kotva") and v.tts]
+            vety = [v for v in self.z.vety if v.mluvci == m and v.druh_reference in ("veta", "kotva")
+                    and v.tts and (v.vyslov or v.cs).strip()]  # věta bez textu (bez dabingu) se nenamlouvá
             if len(vety) < 3:
                 continue
-            for v in vety:
-                srovnat = kotva if v.druh_reference == "kotva" and kotva else stala
-                odpoved = self.worker.dotaz({"op": "identita", "a": str(self.z.slozka / v.tts),
-                                             "b": str(self.z.slozka / srovnat)}, timeout=120.0)
-                v.identita = odpoved.get("podobnost") if odpoved.get("ok") else None
+            zacatek, konec = od + (do - od) * k / len(mluvci), od + (do - od) * (k + 1) / len(mluvci)
+            stred = (zacatek + konec) / 2
+
+            def srovnat(v: Veta) -> str:
+                return kotva if v.druh_reference == "kotva" and kotva else stala
+
+            for v in self._po_vetach(vety, prubeh, (zacatek, stred), f"Kontrola hlasu M{m + 1}: měřím"):
+                v.identita = self._podobnost(v, srovnat(v))
+                v.qa = [q for q in v.qa if q not in ("hlas_ujel", "identita")]  # značky z dřívějška
             hodnoty = [v.identita for v in vety if v.identita is not None]
             if not hodnoty:
                 continue
             median = float(np.median(hodnoty))
-            ulet = [v for v in vety if v.identita is not None
-                    and (v.identita < median - IDENTITA_ODCHYLKA or v.identita < IDENTITA_MINIMUM)]
-            for v in ulet:
-                if v.druh_reference == "kotva":
-                    self.log(f"Věta {v.id}: hlas vybočil (podobnost {v.identita:.2f} vs medián "
-                             f"{median:.2f}) — generuji znovu jiným pokusem")
-                    v.seed += 1
-                else:
-                    self.log(f"Věta {v.id}: hlas vybočil (podobnost {v.identita:.2f} vs medián "
-                             f"{median:.2f}) — generuji se stálou referencí mluvčího")
-                    v.reference, v.druh_reference = (kotva, "kotva") if kotva else (stala, "mluvci")
-                v.qa = sorted(set(v.qa) | {"identita"})
-                self._synth(v, None)
-            prubeh(0.8, f"Hlídač identity: mluvčí M{m + 1}, přegenerováno {len(ulet)}")
+
+            def ujel(podobnost: float | None) -> bool:
+                return podobnost is not None and (podobnost < median - IDENTITA_ODCHYLKA
+                                                  or podobnost < IDENTITA_MINIMUM)
+
+            def klic(stav: dict) -> tuple[bool, bool, float]:  # změřená > bez přesahu > podobnost
+                identita = stav["identita"]
+                return identita is not None, "presah" not in stav["qa"], identita if identita is not None else -1.0
+
+            ulet = [v for v in vety if ujel(v.identita)]
+            for v in self._po_vetach(ulet, prubeh, (stred, konec), f"Kontrola hlasu M{m + 1}: opravuji"):
+                self.log(f"Věta {v.id}: hlas vybočil (podobnost {v.identita:.2f} vs medián "
+                         f"{median:.2f}) — namlouvám znovu")
+                zaloha = self.z.cesta(f"tts/veta_{v.id:04d}.identita.wav")
+                chyba: RuntimeError | None = None
+                try:
+                    nejlepsi = self._snimek(v, zaloha)
+                    try:
+                        for _ in range(POKUSY_IDENTITY):
+                            if v.druh_reference == "veta":
+                                v.reference, v.druh_reference = (kotva, "kotva") if kotva else (stala, "mluvci")
+                            else:
+                                v.seed += 1
+                            self._synth(v, None)
+                            self.dolad(v, slot(self.z, indexy[v.id]))
+                            v.qa = sorted(set(v.qa) | {"identita"})
+                            v.identita = self._podobnost(v, srovnat(v))
+                            if klic({"qa": v.qa, "identita": v.identita}) > klic(nejlepsi):
+                                nejlepsi = self._snimek(v, zaloha)
+                            if v.identita is not None and not ujel(v.identita) and "presah" not in v.qa:
+                                break
+                    except RuntimeError as e:  # worker selhal (nebo zrušeno) — vrátit nejlepší pokus
+                        chyba = e
+                    if chyba is not None or (v.seed, v.reference, v.tts_otisk) != (
+                            nejlepsi["seed"], nejlepsi["reference"], nejlepsi["tts_otisk"]):
+                        shutil.copyfile(zaloha, self.z.slozka / v.tts)
+                        for pole, hodnota in nejlepsi.items():
+                            setattr(v, pole, hodnota)
+                finally:
+                    zaloha.unlink(missing_ok=True)
+                if ujel(v.identita):
+                    v.qa = [q for q in v.qa if q != "identita"] + ["hlas_ujel"]
+                self.z.uloz()  # take na disku a job.json vždy spolu
+                if isinstance(chyba, Zruseno):
+                    raise chyba
+                if chyba is not None:
+                    self.log(f"Věta {v.id}: nový pokus selhal ({chyba}) — nechávám lepší verzi")
+            opraveno = sum(1 for v in ulet if not ujel(v.identita))
+            prubeh(konec, f"Kontrola hlasu M{m + 1}: opraveno {opraveno} z {len(ulet)}")
+            if len(ulet) > opraveno:
+                self.log(f"Mluvčí M{m + 1}: {len(ulet) - opraveno} vět má pořád hlas mimo řadu — "
+                         "jsou v tabulce označené, poslechni si je.")
         self.z.uloz()
 
     def _kotvy(self, prubeh: Prubeh) -> None:
@@ -363,17 +472,10 @@ class Hlas:
         self.worker.start()
         try:
             self._kotvy(prubeh)
-            start = time.monotonic()
-            for i, v in enumerate(vety):
+            for v in self._po_vetach(vety, prubeh, USEK_NAMLUVENI, "Hlas"):
                 self._synth(v, None)
-                if i % 5 == 4 or i == len(vety) - 1:
-                    ubehlo = time.monotonic() - start
-                    zbyva = ubehlo / (i + 1) * (len(vety) - i - 1)
-                    prubeh(0.7 * (i + 1) / len(vety),
-                           f"Hlas {i + 1}/{len(vety)} (zbývá ~{zbyva / 60:.0f} min)")
-                    self.z.uloz()
-            self._identita(prubeh)
             self._delky(prubeh)
+            self._identita(prubeh)  # až po doladění délek — to přegeneruje stovky vět
         finally:
             self.worker.zavri()
         self.z.hotovo("hlas")
@@ -382,54 +484,100 @@ class Hlas:
         indexy = {v.id: i for i, v in enumerate(self.z.vety)}
         dlouhe: list[tuple[Veta, float]] = []
         for v in self.z.vety:
-            if not v.tts:
+            if not v.tts or not (v.vyslov or v.cs).strip():
                 continue
             s = slot(self.z, indexy[v.id])
             v.pomer = round(v.prirozena_s / max(v.delka, 0.01), 3)
             if v.prirozena_s > s * ZRYCHLENI_BEZ_OBAV and not v.upraveno:
                 dlouhe.append((v, s))
         if dlouhe:
-            prubeh(0.85, f"Zkracuji {len(dlouhe)} vět, které se nevejdou…")
+            prubeh(USEK_ZKRACENI[0], f"Zkracuji {len(dlouhe)} vět, které se nevejdou (Codex)…")
             for v, s in dlouhe:
                 v.max_znaku = max(8, int(len(v.vyslov or v.cs) * s / v.prirozena_s * 0.95))
             translate.zkrat(self.z, [v for v, _ in dlouhe], self.log)
-            for v, _ in dlouhe:
+            for v, _ in self._po_vetach(dlouhe, prubeh, USEK_ZKRACENI, "Zkracuji věty: hlas"):
                 self._synth(v, None)
         # a naopak: věta výrazně kratší než originál → po ní by zůstalo ticho, zatímco řečník
         # na obraze mluví. Změřená délka hlasu přesně řekne, kolik textu přidat.
         kratke = [(v, slot(self.z, indexy[v.id])) for v in self.z.vety
-                  if v.tts and not v.upraveno and v.delka >= MIN_PRODLOUZENI_S
+                  if v.tts and (v.vyslov or v.cs).strip() and not v.upraveno and v.delka >= MIN_PRODLOUZENI_S
                   and v.prirozena_s < v.delka * PRAH_PRODLOUZENI]
         if kratke:
-            prubeh(0.87, f"Prodlužuji {len(kratke)} vět, po kterých by zůstalo ticho…")
+            prubeh(USEK_PRODLOUZENI[0], f"Prodlužuji {len(kratke)} vět, po kterých by zůstalo ticho (Codex)…")
             puvodni = {v.id: v.vyslov or v.cs for v, _ in kratke}
             for v, s in kratke:
                 znaku_za_s = len(puvodni[v.id]) / max(v.prirozena_s, 0.3)  # tahle věta, tenhle hlas
                 v.cil_znaku = int(v.delka * CIL_VYPLNENI * znaku_za_s)
                 v.max_znaku = max(v.cil_znaku, int(s * znaku_za_s * 0.95))
             translate.prodluz(self.z, [v for v, _ in kratke], self.log)
-            for v, _ in kratke:
-                if (v.vyslov or v.cs) != puvodni[v.id]:
-                    self._synth(v, None)
-        prubeh(0.92, "Dolaďuji délky vět…")
-        for v in self.z.vety:
-            if not v.tts:
+            zmenene = [v for v, _ in kratke if (v.vyslov or v.cs) != puvodni[v.id]]
+            for v in self._po_vetach(zmenene, prubeh, USEK_PRODLOUZENI, "Prodlužuji věty: hlas"):
+                self._synth(v, None)
+        prubeh(USEK_DOLADENI[0], "Dolaďuji délky vět…")
+        for v in self._po_vetach(self.z.vety, prubeh, USEK_DOLADENI, "Dolaďuji délky vět"):
+            if not v.tts or not (v.vyslov or v.cs).strip():
                 continue
-            s = slot(self.z, indexy[v.id])
-            v.pomer = round(v.prirozena_s / max(v.delka, 0.01), 3)
-            v.qa = [q for q in v.qa if q not in ("zrychleno", "presah", "zpomaleno")]
-            if v.prirozena_s < v.delka * PRAH_KRATKE_VETY:
-                # krátká věta: mírně zpomalit, ať řeč pokryje čas, kdy mluví originál
-                cil = min(v.delka, v.prirozena_s / MAX_ZPOMALENI)  # celá délka originálu (pusa)
-                if cil > v.prirozena_s * 1.03:
-                    self._synth(v, cil)
-                    v.qa.append("zpomaleno")
-                    continue
-            if v.prirozena_s <= s:
-                v.vynucena_s = None
-                v.vysledna_s = v.prirozena_s
-                continue
-            cil = s if v.prirozena_s / s <= 1 / MIN_RYCHLOST else v.prirozena_s * MIN_RYCHLOST
-            self._synth(v, cil)
-            v.qa.append("zrychleno" if cil == s else "presah")
+            self.dolad(v, slot(self.z, indexy[v.id]))
         self.z.uloz()
+
+    def dolad(self, v: Veta, s: float) -> None:
+        """Délka jedné věty do slotu `s`: krátkou zpomalit na délku originálu (pusa), dlouhou
+        zrychlit na slot; značka zpomaleno/zrychleno/presah podle změřené délky."""
+        v.pomer = round(v.prirozena_s / max(v.delka, 0.01), 3)
+        v.qa = [q for q in v.qa if q not in ("zrychleno", "presah", "zpomaleno")]
+        if v.prirozena_s < v.delka * PRAH_KRATKE_VETY:
+            # krátká věta: mírně zpomalit, ať řeč pokryje čas, kdy mluví originál
+            cil = min(v.delka, v.prirozena_s / MAX_ZPOMALENI)  # celá délka originálu (pusa)
+            if cil > v.prirozena_s * 1.03:
+                if self._vynut(v, cil, s, v.prirozena_s * 1.02):
+                    v.qa.append("zpomaleno")
+                    return
+                # žádný pokus nebyl zároveň pomalejší než přirozená a v slotu → přirozená (vejde se)
+                self._synth(v, None)
+        if v.prirozena_s <= s + TOLERANCE_PRESAHU_S:
+            v.vynucena_s = None
+            v.vysledna_s = v.prirozena_s
+            return
+        if v.prirozena_s / s <= 1 / MIN_RYCHLOST:
+            self._vynut(v, s, s, v.prirozena_s * MIN_RYCHLOST)
+        else:
+            self._synth(v, v.prirozena_s * MIN_RYCHLOST)  # ani nejvyšší zrychlení na slot nestačí
+        # značka podle změřené délky (vynucená verze občas vyjde kratší, než se chtělo)
+        v.qa.append("zrychleno" if v.vysledna_s <= s + TOLERANCE_PRESAHU_S else "presah")
+
+    def _vynut(self, v: Veta, cil: float, s: float, nejkratsi: float) -> bool:
+        """Vynutí délku `cil` a ohlídá výsledek: věta nesmí přesáhnout slot `s` do další věty
+        (dva hlasy naráz zní jako seknutí) ani vyjít kratší než `nejkratsi` (rychlejší, než je
+        dovoleno). Úvodní šum vynucené verze se pokus od pokusu liší (`rezie_s` je změřená na
+        přirozené; rozhovor Liquid 2026-09-29: −0,95 až +0,39 s), proto se každý pokus změří
+        a mimo meze se věta až dvakrát přegeneruje s cílem posunutým o chybu posledního pokusu.
+        Když se netrefí žádný, zůstane nejlepší (bez přesahu, nejblíž cíli). Vrátí, zda je v mezích."""
+        chtena = min(cil, s - TOLERANCE_PRESAHU_S)
+
+        def v_mezich() -> bool:
+            return nejkratsi - TOLERANCE_PRESAHU_S <= v.vysledna_s <= s + TOLERANCE_PRESAHU_S
+
+        def horsi(delka: float) -> tuple[bool, float]:  # nejdřív přesah do další věty, pak odchylka
+            return delka > s + TOLERANCE_PRESAHU_S, abs(delka - chtena)
+
+        zaloha = self.z.cesta(f"tts/veta_{v.id:04d}.nejlepsi.wav")
+        nejlepsi: tuple[float, float, str, int] | None = None
+        try:
+            self._synth(v, cil)
+            for pokus in range(OPRAVY_PRESTRELU + 1):
+                if v_mezich():
+                    return True
+                if nejlepsi is None or horsi(v.vysledna_s) < horsi(nejlepsi[1]):
+                    nejlepsi = (v.vynucena_s, v.vysledna_s, v.tts_otisk, v.seed)  # _synth mění seed u prázdného take
+                    shutil.copyfile(self.z.slozka / v.tts, zaloha)
+                dalsi = max(0.3, chtena - (v.vysledna_s - cil))
+                if pokus == OPRAVY_PRESTRELU or abs(dalsi - cil) < 0.01:  # skoro stejná délka = tentýž take
+                    break
+                cil = dalsi
+                self._synth(v, cil)
+            if nejlepsi and (v.vynucena_s, v.vysledna_s) != nejlepsi[:2]:
+                os.replace(zaloha, self.z.slozka / v.tts)
+                v.vynucena_s, v.vysledna_s, v.tts_otisk, v.seed = nejlepsi
+            return v_mezich()
+        finally:
+            zaloha.unlink(missing_ok=True)

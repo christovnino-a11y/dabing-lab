@@ -7,7 +7,7 @@ Protokol: jeden JSON na řádek, stdin → stdout. Výpisy knihoven jdou na stde
 stdout patří jen odpovědím.
   {"op": "nacti"}                                   → {"ok": true, "zarizeni": "mps"}
   {"op": "synth", "id", "text", "jazyk", "ref_audio", "ref_text",
-   "duration"?, "kroky"?, "guidance"?, "denoise"?, "seed"?, "vystup"}
+   "duration"?, "kroky"?, "guidance"?, "denoise"?, "seed"?, "orez"?, "vystup"}
                                                     → {"ok": true, "id", "sekundy", "vypocet_s"}
   {"op": "identita", "a": wav, "b": wav}            → {"ok": true, "podobnost": 0.73}
   {"op": "konec"}
@@ -83,6 +83,9 @@ def synth(zadani: dict) -> dict:
         "num_step": int(zadani.get("kroky", 32)),
         "guidance_scale": float(zadani.get("guidance", 2.0)),
         "denoise": bool(zadani.get("denoise", True)),
+        # vlastní ořez ticha OmniVoice má pevný práh −50 dBFS a tiše vyslovené jednoslovné věty
+        # („alebo") uřízne celé; s orez=False ořízne ticho až lab (práh vůči špičce věty)
+        "postprocess_output": bool(zadani.get("orez", True)),
     }
     if zadani.get("seed") is not None:
         torch.manual_seed(int(zadani["seed"]))

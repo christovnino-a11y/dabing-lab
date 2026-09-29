@@ -16,6 +16,7 @@ import statistics
 import re
 import unicodedata
 
+import soundfile as sf
 from parakeet_mlx import from_pretrained
 
 from dabing.config import MODEL_ASR
@@ -50,7 +51,10 @@ def main() -> None:
     model = from_pretrained(MODEL_ASR)
     vysledek = {}
     for i, v in enumerate(vety):
-        prepis = model.transcribe(slozka / v["tts"]).text.strip()
+        info = sf.info(str(slozka / v["tts"]))
+        # prázdný nebo skoro prázdný take (OmniVoice u jednoslovné věty) by Parakeet shodil
+        # („as_strided: Negative dimensions") — věta bez hlasu je prostě nesrozumitelná
+        prepis = model.transcribe(slozka / v["tts"]).text.strip() if info.frames >= info.samplerate * 0.1 else ""
         cil = v.get("vyslov") or v.get("cs") or ""
         vysledek[str(v["id"])] = {"cer": round(cer(cil, prepis), 3), "prepis": prepis}
         if i % 5 == 4:
