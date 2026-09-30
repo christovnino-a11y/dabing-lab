@@ -36,6 +36,10 @@ PLATO_MAX_POKLES_DB_S = 10.0
 PLATO_NAD_PODLAHOU_DB = 6.0     # ustálený ruch sálu ve hlasové stopě není nový zvuk
 NADECH_PRED_SLOVEM_S = 0.6      # nádech před slovem pauzu neotevírá…
 NADECH_POD_RECI_DB = 15.0       # …když je aspoň o tolik tišší než řeč
+RECI_MIMO_MAX_ODSTUP_S = 2.0    # řeč bez věty takhle blízko dabované věty = výplň téhož mluvčího
+RECI_MIMO_MIN_S = 0.1           # kratší záblesk detektoru řeči se ignoruje
+RECI_MIMO_MAX_S = 2.0           # výplně jsou krátké (Knapek ≤ 1,6 s); delší je zpěv nebo celá řeč
+RECI_MIMO_OKOLI_CHRANENYCH_S = 0.15  # běh řeči, který se dotýká věty bez překladu, zůstane celý
 EPS = 1e-6
 
 
@@ -176,6 +180,40 @@ def useky_aktivity(vety: list[Veta], k: Kontext) -> list[tuple[float, float, flo
         else:
             rec.append([od, konec, konec_vad])
     return [(max(0.0, a - PRED_SLOVEM_S), b + ZA_SLOVEM_S, kv) for a, b, kv in rec]
+
+
+def useky_mimo_vet(useky: list[tuple[float, float, float]], k: Kontext,
+                   chranene: list[tuple[float, float]] = (),
+                   max_odstup_s: float = RECI_MIMO_MAX_ODSTUP_S) -> list[tuple[float, float, float]]:
+    """Řeč podle detektoru řeči mimo slova dabovaných vět, ale nejvýš `max_odstup_s` od nich:
+    krátké nepřepsané výplně dabovaného mluvčího („ehm", „no", nedořečená slova). Bez odečtu by
+    mezi větami zazněl jeho původní hlas (Knapek 2026-09-30: 114 úseků, ~94 s). Zůstává
+    v originále: řeč daleko od dabovaných vět, dlouhé úseky (zpěv v hudbě, nepřepsaný monolog)
+    a celý běh řeči, ve kterém leží věta bez překladu (jinak by se její okolí rozsekalo)."""
+    if k.vad is None or not len(k.vad) or not useky:
+        return []
+    rec = np.concatenate(([False], k.vad >= VAD_PRAH, [False]))
+    hrany = np.flatnonzero(rec[1:] != rec[:-1])
+    zacatky = np.array([a for a, _, _ in useky])
+    konce = np.array([b for _, b, _ in useky])
+    vysledek: list[tuple[float, float, float]] = []
+    for i0, i1 in zip(hrany[::2], hrany[1::2]):
+        beh_od, beh_do = i0 * KROK_VAD_S, i1 * KROK_VAD_S
+        if any(c - RECI_MIMO_OKOLI_CHRANENYCH_S < beh_do and d + RECI_MIMO_OKOLI_CHRANENYCH_S > beh_od
+               for c, d in chranene):
+            continue
+        # z běhu řeči jen části, které žádný úsek aktivity nepokrývá
+        kusy = [(beh_od, beh_do)]
+        for a, b in zip(zacatky, konce):
+            kusy = [c for x, y in kusy
+                    for c in (((x, y),) if b <= x or a >= y else ((x, a), (b, y))) if c[1] > c[0]]
+        for od, do in kusy:
+            if not RECI_MIMO_MIN_S <= do - od <= RECI_MIMO_MAX_S:
+                continue
+            if float(np.maximum(0.0, np.maximum(zacatky - do, od - konce)).min()) > max_odstup_s:
+                continue
+            vysledek.append((max(0.0, od - PRED_SLOVEM_S), do + VAD_REZERVA_S, do))
+    return vysledek
 
 
 def _kosinus(delka: int, stoupa: bool) -> np.ndarray:

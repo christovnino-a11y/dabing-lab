@@ -354,6 +354,12 @@ def sloz(zakazka: Zakazka, log: Log, identita: bool = False) -> dict[str, Path]:
     # věty bez překladu mají znít v originále, i když k nim sahá rezerva sousední věty
     dabovane = {v.id for v in vety}
     chranene = [(v.start, v.end) for v in zakazka.vety if v.id not in dabovane]
+    vyplne = maska.useky_mimo_vet(useky, kontext, chranene)  # nepřepsané „ehm", „no" mezi větami
+    if vyplne:
+        log(f"Odečítám i {len(vyplne)} krátkých úseků řeči mezi větami, které přepis nezachytil "
+            f"(~{sum(max(0.0, kv - a - maska.PRED_SLOVEM_S) for a, _, kv in vyplne):.0f} s) — "
+            "jinak by v nich zazněl původní hlas.")
+    useky += vyplne
     g = maska.maska(useky, kontext, SR_MIX, n, chranene)
     pokryti = float((g > 0).mean()) * 100
     log(f"Hlas mluvčího se odečítá v {pokryti:.0f} % času, jinde hraje originál beze změny.")

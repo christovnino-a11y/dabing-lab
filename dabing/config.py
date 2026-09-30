@@ -58,6 +58,11 @@ REFERENCE_HLASU = "kotva"
 KOTVA_TEXT = {kod: j.kotva for kod, j in DABING.items()}
 KOTVA_SEEDY = (1, 2, 3)  # tři pokusy, vyhraje ten nejpodobnější hlasu mluvčího
 KOTVA_MIN_PODOBNOST = 0.30  # méně = kotva nezní jako mluvčí (krátká reference) → klon z jeho vět
+# Blízké jazyky: skutečný hlas mluvčího zní v cílovém jazyce přirozeně (cizí přízvuk nehrozí)
+# a klon z kotvy (klon klonu) by jen ujížděl — 2026-09-30, cs → sk, pplk. Knapek: podobnost
+# s ním 0,89 ze skutečného hlasu vs 0,53 z kotvy, 75 z 275 vět znělo spíš jako moderátor.
+# Kotva se u nich namluví jen kvůli změření rychlosti řeči, věty se klonují ze stálé reference.
+BLIZKE_JAZYKY = ({"cs", "sk"},)
 
 # Pravidla časování (viz tts.py, Hlas._delky).
 ZRYCHLENI_BEZ_OBAV = 1.15   # do tohoto poměru stačí nativní duration OmniVoice

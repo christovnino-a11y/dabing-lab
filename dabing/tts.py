@@ -26,7 +26,7 @@ import numpy as np
 import soundfile as sf
 
 from . import refs, translate
-from .config import (CIL_VYPLNENI, KOTVA_MIN_PODOBNOST, KOTVA_SEEDY, KOTVA_TEXT, MAX_POZICKA_S, MAX_ZPOMALENI, MIN_RYCHLOST,
+from .config import (BLIZKE_JAZYKY, CIL_VYPLNENI, KOTVA_MIN_PODOBNOST, KOTVA_SEEDY, KOTVA_TEXT, MAX_POZICKA_S, MAX_ZPOMALENI, MIN_RYCHLOST,
                      PRAH_KRATKE_VETY, REFERENCE_HLASU, REZERVA_ZA_VETOU_S, WORKER_PYTHON,
                      WORKER_SKRIPT, ZRYCHLENI_BEZ_OBAV, offline_env)
 from .job import Veta, Zakazka, otisk_tts
@@ -62,6 +62,12 @@ MIN_SKUPINA_IDENTITY = 10
 KRATKA_IDENTITA_S = 1.5   # kratší věty mají větší rozptyl podobnosti → větší odchylka
 IDENTITA_ODCHYLKA_KRATKE = 0.18
 MIN_DELKA_IDENTITA_S = 1.0  # kratší take: ECAPA šumí, absolutní minimum se nepoužije
+# Take musí znít víc jako vlastní mluvčí než jako kterýkoli jiný (skutečné hlasy obou). Dobré
+# Knapkovy věty měly náskok před moderátorem +0,4 až +0,6, klon z kotvy −0,2 až +0,1.
+IDENTITA_NASKOK = 0.10
+# Reference jiného mluvčího podobnější vlastní než tohle = nejspíš týž člověk rozdělený diarizací
+# (odlišní mluvčí: ~0,3) → pro náskok se nepoužije.
+IDENTITA_JINY_MLUVCI_MAX = 0.55
 
 
 class WorkerSpadl(RuntimeError):
@@ -199,6 +205,26 @@ def slot(zakazka: Zakazka, i: int) -> float:
     konec_videa = zakazka.delka_s or v.end + MAX_POZICKA_S
     dalsi = zakazka.vety[i + 1].start if i + 1 < len(zakazka.vety) else min(v.end + MAX_POZICKA_S, konec_videa)
     return v.delka + max(0.0, min(dalsi - v.end - REZERVA_ZA_VETOU_S, MAX_POZICKA_S))
+
+
+ZNAKY_JAZYKA = {"cs": set("řěů"), "sk": set("äôľĺŕ")}  # písmena, která má jen jeden z jazyků
+
+
+def zdrojovy_jazyk(z: Zakazka) -> str:
+    """Jazyk originálu; u „Automaticky" (výchozí v labu) češtinu a slovenštinu pozná podle
+    písmen v přepisu — jinak by se u českého videa do slovenštiny klonovalo z kotvy."""
+    if z.jazyk_zdroje != "auto":
+        return z.jazyk_zdroje
+    text = " ".join(v.en for v in z.vety).lower()
+    pocty = {j: sum(text.count(c) for c in znaky) for j, znaky in ZNAKY_JAZYKA.items()}
+    jazyk, pocet = max(pocty.items(), key=lambda p: p[1])
+    return jazyk if pocet >= 20 and pocet >= 5 * min(pocty.values()) else "auto"
+
+
+def blizke_jazyky(z: Zakazka) -> bool:
+    """Originál a dabing v blízkých jazycích (cs ↔ sk) → klon ze skutečného hlasu, ne z kotvy."""
+    zdroj = zdrojovy_jazyk(z)
+    return any({zdroj, z.jazyk} <= dvojice for dvojice in BLIZKE_JAZYKY) and zdroj != z.jazyk
 
 
 def ocekavana_podobnost(vety: list[Veta]) -> dict[int, float]:
@@ -367,11 +393,15 @@ class Hlas:
                 self.z.uloz()
 
     def _podobnost(self, v: Veta, srovnat: str) -> float | None:
+        return self._podobnost_cest(v.tts, srovnat, f"Věta {v.id}")
+
+    def _podobnost_cest(self, a: str, b: str, kde: str = "Kontrola hlasu") -> float | None:
+        """Podobnost hlasu (ECAPA) dvou nahrávek zakázky; při pádu workeru None."""
         try:
-            odpoved = self.worker.dotaz({"op": "identita", "a": str(self.z.slozka / v.tts),
-                                         "b": str(self.z.slozka / srovnat)}, timeout=120.0)
+            odpoved = self.worker.dotaz({"op": "identita", "a": str(self.z.slozka / a),
+                                         "b": str(self.z.slozka / b)}, timeout=120.0)
         except WorkerSpadl as chyba:  # kontrola hlasu nesmí shodit hotový dabing
-            self.log(f"Věta {v.id}: měření hlasu selhalo ({chyba}) — restartuji worker")
+            self.log(f"{kde}: měření hlasu selhalo ({chyba}) — restartuji worker")
             self.worker.zabij()
             self.worker.start()
             return None
@@ -395,44 +425,86 @@ class Hlas:
         od, do = USEK_IDENTITY
         for k, (m, stala) in enumerate(mluvci):
             kotva = self.kotvy.get(m)
-            vety = [v for v in self.z.vety if v.mluvci == m and v.druh_reference in ("veta", "kotva")
+            vety = [v for v in self.z.vety if v.mluvci == m and v.druh_reference in ("veta", "kotva", "mluvci")
                     and v.tts and (v.vyslov or v.cs).strip()]  # věta bez textu (bez dabingu) se nenamlouvá
             if len(vety) < 3:
                 continue
             zacatek, konec = od + (do - od) * k / len(mluvci), od + (do - od) * (k + 1) / len(mluvci)
             stred = (zacatek + konec) / 2
+            # skutečné hlasy ostatních mluvčích — jen těch, kteří znějí opravdu jinak: když diarizace
+            # rozdělí jednoho člověka na dva mluvčí (nebo je reference jiného mluvčího přeslechnutá),
+            # zněla by každá věta „jako jiný mluvčí" a kontrola by ji zbytečně přegenerovala
+            cizi = []
+            for n, r in self.mluvci_ref.items():
+                if n == m:
+                    continue
+                paru = self._podobnost_cest(stala, r)
+                if paru is not None and paru < IDENTITA_JINY_MLUVCI_MAX:
+                    cizi.append(r)
+                else:
+                    self.log(f"Mluvčí M{m + 1} a M{n + 1} znějí podobně ({paru}) — pro kontrolu "
+                             "záměny hlasu je nesrovnávám.")
+            naskoky: dict[int, float | None] = {}
 
             def srovnat(v: Veta) -> str:
                 return kotva if v.druh_reference == "kotva" and kotva else stala
 
-            for v in self._po_vetach(vety, prubeh, (zacatek, stred), f"Kontrola hlasu M{m + 1}: měřím"):
+            def zmer(v: Veta) -> None:
+                """Podobnost s vlastní referencí a náskok před nejpodobnějším jiným mluvčím
+                (obojí se skutečnými hlasy): klon z kotvy u Knapka zněl jako moderátor, ač
+                podobnost s vlastní kotvou vypadala v řadě (2026-09-30)."""
                 v.identita = self._podobnost(v, srovnat(v))
+                naskoky[v.id] = None
+                if cizi and v.identita is not None:
+                    vlastni = v.identita if srovnat(v) == stala else self._podobnost(v, stala)
+                    jine = [p for p in (self._podobnost(v, r) for r in cizi) if p is not None]
+                    if vlastni is not None and jine:
+                        naskoky[v.id] = vlastni - max(jine)
+
+            def zni_jako_jiny(v: Veta) -> bool:
+                return naskoky.get(v.id) is not None and naskoky[v.id] < IDENTITA_NASKOK
+
+            for v in self._po_vetach(vety, prubeh, (zacatek, stred), f"Kontrola hlasu M{m + 1}: měřím"):
+                zmer(v)
                 v.qa = [q for q in v.qa if q not in ("hlas_ujel", "identita")]  # značky z dřívějška
             ocekavana = ocekavana_podobnost(vety)
             if not ocekavana:
                 continue
 
-            def ujel(v: Veta) -> bool:
-                """Podobnost aktuálního take vybočuje z řady vět podobné délky (a věta nemá být
-                pod absolutním minimem — to jen u vět, na kterých ECAPA už něco měří)."""
-                if v.identita is None or v.id not in ocekavana:
-                    return False
-                odchylka = IDENTITA_ODCHYLKA_KRATKE if v.vysledna_s < KRATKA_IDENTITA_S else IDENTITA_ODCHYLKA
-                return (v.identita < ocekavana[v.id] - odchylka
-                        or (v.vysledna_s >= MIN_DELKA_IDENTITA_S and v.identita < IDENTITA_MINIMUM))
+            def stav(v: Veta) -> dict:
+                return {"id": v.id, "qa": list(v.qa), "identita": v.identita, "vysledna": v.vysledna_s,
+                        "naskok": naskoky.get(v.id)}
 
-            def klic(stav: dict) -> tuple[bool, bool, float]:  # změřená > bez přesahu > podobnost
-                identita = stav["identita"]
-                return identita is not None, "presah" not in stav["qa"], identita if identita is not None else -1.0
+            def ujel_stav(s: dict) -> bool:
+                """Podobnost take vybočuje z řady vět podobné délky (a nemá být pod absolutním
+                minimem — to jen u vět, na kterých ECAPA už něco měří), nebo take zní skoro
+                stejně jako jiný mluvčí."""
+                if s["identita"] is None or s["id"] not in ocekavana:
+                    return False
+                odchylka = IDENTITA_ODCHYLKA_KRATKE if s["vysledna"] < KRATKA_IDENTITA_S else IDENTITA_ODCHYLKA
+                return (s["identita"] < ocekavana[s["id"]] - odchylka
+                        or (s["vysledna"] >= MIN_DELKA_IDENTITA_S and s["identita"] < IDENTITA_MINIMUM)
+                        or (s["naskok"] is not None and s["naskok"] < IDENTITA_NASKOK))
+
+            def ujel(v: Veta) -> bool:
+                return ujel_stav(stav(v))
+
+            def klic(s: dict) -> tuple[bool, bool, bool, bool, float]:
+                """změřená > bez přesahu > projde celou kontrolou > nezní jako jiný mluvčí > podobnost"""
+                identita, naskok = s["identita"], s["naskok"]
+                return (identita is not None, "presah" not in s["qa"], not ujel_stav(s),
+                        naskok is None or naskok >= IDENTITA_NASKOK,
+                        identita if identita is not None else -1.0)
 
             ulet = [v for v in vety if ujel(v)]
             for v in self._po_vetach(ulet, prubeh, (stred, konec), f"Kontrola hlasu M{m + 1}: opravuji"):
+                duvod = (f", náskok před jiným mluvčím {naskoky[v.id]:+.2f}" if zni_jako_jiny(v) else "")
                 self.log(f"Věta {v.id}: hlas vybočil (podobnost {v.identita:.2f} vs {ocekavana[v.id]:.2f} "
-                         f"u vět podobné délky) — namlouvám znovu")
+                         f"u vět podobné délky{duvod}) — namlouvám znovu")
                 zaloha = self.z.cesta(f"tts/veta_{v.id:04d}.identita.wav")
                 chyba: RuntimeError | None = None
                 try:
-                    nejlepsi = self._snimek(v, zaloha)
+                    nejlepsi, nejlepsi_stav = self._snimek(v, zaloha), stav(v)
                     try:
                         for _ in range(POKUSY_IDENTITY):
                             if v.druh_reference == "veta":
@@ -442,9 +514,9 @@ class Hlas:
                             self._synth(v, None)
                             self.dolad(v, slot(self.z, indexy[v.id]))
                             v.qa = sorted(set(v.qa) | {"identita"})
-                            v.identita = self._podobnost(v, srovnat(v))
-                            if klic({"qa": v.qa, "identita": v.identita}) > klic(nejlepsi):
-                                nejlepsi = self._snimek(v, zaloha)
+                            zmer(v)
+                            if klic(stav(v)) > klic(nejlepsi_stav):
+                                nejlepsi, nejlepsi_stav = self._snimek(v, zaloha), stav(v)
                             if v.identita is not None and not ujel(v) and "presah" not in v.qa:
                                 break
                     except RuntimeError as e:  # worker selhal (nebo zrušeno) — vrátit nejlepší pokus
@@ -454,6 +526,7 @@ class Hlas:
                         shutil.copyfile(zaloha, self.z.slozka / v.tts)
                         for pole, hodnota in nejlepsi.items():
                             setattr(v, pole, hodnota)
+                        naskoky[v.id] = nejlepsi_stav["naskok"]
                 finally:
                     zaloha.unlink(missing_ok=True)
                 if ujel(v):
@@ -482,8 +555,14 @@ class Hlas:
                 self.kotvy[m] = kotva
                 delka = sf.info(str(self.z.slozka / kotva)).duration
                 self.z.rychlost_hlasu[str(m)] = round(len(text) / max(delka, 0.5), 2)
+        blizke = blizke_jazyky(self.z)
+        if blizke:
+            self.log(f"Blízký jazyk ({zdrojovy_jazyk(self.z)} → {self.z.jazyk}): hlas klonuji ze skutečného "
+                     "hlasu mluvčího, kotva jen změří rychlost řeči.")
         for v in self.z.vety:
-            if v.mluvci in self.kotvy:
+            if blizke and v.mluvci in self.mluvci_ref:
+                v.reference, v.druh_reference = self.mluvci_ref[v.mluvci], "mluvci"
+            elif v.mluvci in self.kotvy:
                 v.reference, v.druh_reference = self.kotvy[v.mluvci], "kotva"
         if self.z.rychlost_hlasu:
             self.log("Rychlost hlasu (změřeno z kotvy): " + ", ".join(
