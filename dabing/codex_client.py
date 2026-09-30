@@ -118,8 +118,12 @@ class Codex:
         )
         self.klient = CodexClient(konfigurace, approval_handler=self._odmitni)
         self.klient.start()
-        self.klient.initialize()
-        self._over_predplatne()
+        try:
+            self.klient.initialize()
+            self._over_predplatne()
+        except BaseException:  # nepřihlášený / API klíč → app-server nenechat běžet (with ho nezavře)
+            self.close()
+            raise
 
     def close(self) -> None:
         if self.klient is not None:
@@ -136,6 +140,8 @@ class Codex:
 
     def _over_predplatne(self) -> None:
         ucet = self._surove("account/read", {}) or {}
+        if not ucet.get("account"):
+            raise CodexChyba("Codex není přihlášený — přihlas se v labu v sekci „Codex účet“.")
         druh = json.dumps(ucet).lower()
         if '"apikey"' in druh and '"chatgpt"' not in druh:
             raise CodexChyba("Codex je přihlášený API klíčem, lab jede jen přes předplatné.")

@@ -16,6 +16,7 @@ from pathlib import Path
 
 import gradio as gr
 
+from dabing import ucet
 from dabing.config import JAZYKY, JAZYKY_ZDROJE, PORT
 from dabing.job import Zakazka
 from dabing.pipeline import Pipeline
@@ -143,6 +144,14 @@ def spustit(odkaz: str, soubor, rezim: str, jazyk_videa: str, mluvci: str, jazyk
     if not zdroj:
         yield "", "Vlož odkaz na YouTube nebo nahraj soubor.", gr.skip(), gr.skip(), gr.skip(), gr.skip()
         return
+    if REZIMY[rezim] == "codex":
+        # radši hned než po stažení, separaci a přepisu (desítky minut)
+        stav_uctu = ucet.stav()
+        if not stav_uctu.prihlasen:
+            zprava = ("Překlad Codexem potřebuje přihlášení — přihlas se nahoře v sekci **Codex účet**, "
+                      "nebo zvol plně lokální režim." if stav_uctu.overeno else stav_uctu.popis)
+            yield "", zprava, gr.skip(), gr.skip(), gr.skip(), gr.skip()
+            return
     pocet = None if mluvci == "Automaticky" else int(mluvci)
     yield from _prubeh_behu(lambda p: p.cely(zdroj, JAZYKY[jazyk], REZIMY[rezim], pocet,
                                              JAZYKY_ZDROJE[jazyk_videa]))
@@ -179,9 +188,78 @@ def zrusit():
     return "Zastavuji…"
 
 
+# ---------------------------------------------------------------- účet Codexu
+def ukaz_ucet():
+    stav = ucet.stav()
+    return stav.popis, gr.update(open=not stav.prihlasen)
+
+
+def _prihlasit(druh: str):
+    """Spustí přihlášení účtem ChatGPT a do UI průběžně píše návod a stav, dokud neskončí."""
+    with _zamek:
+        bezi = _beh["pipeline"] is not None
+    if bezi:
+        yield "Právě běží dabing — přihlášení změň, až doběhne."
+        return
+    try:
+        pokus = ucet.zacni(druh)
+    except Exception as chyba:  # noqa: BLE001 — chyba se ukáže v UI
+        yield f"**Přihlášení se nepodařilo spustit:** {type(chyba).__name__}: {chyba}"
+        return
+    if druh == "kod":
+        url = pokus.handle.verification_url
+        navod = (f"1. Otevři **[{url}]({url})** — klidně na telefonu nebo jiném počítači.  \n"
+                 f"2. Přihlas se účtem ChatGPT a zadej kód **`{pokus.handle.user_code}`**.")
+    else:
+        navod = (f"**[Otevři přihlášení OpenAI]({pokus.handle.auth_url})** v prohlížeči na tomto "
+                 "počítači a přihlas se účtem ChatGPT. Stránka OpenAI se pak vrátí na localhost.")
+    start = time.monotonic()
+    try:
+        while not pokus.pockej(2.0):
+            zbyva = ucet.CEKANI_S - (time.monotonic() - start)
+            if zbyva <= 0:
+                yield "Přihlášení vypršelo — zkus to znovu."
+                return
+            yield f"{navod}\n\nČekám na dokončení přihlášení (ještě ~{zbyva / 60:.0f} min)…"
+        if pokus.uspech:
+            yield ucet.stav().popis
+        else:
+            yield f"Přihlášení se nepodařilo: {pokus.chyba or 'zrušeno'}.  \n{ucet.stav().popis}"
+    finally:
+        ucet.dokonci(pokus)  # zavře app-server i při zavření stránky nebo vypršení
+
+
+def prihlasit_kodem():
+    yield from _prihlasit("kod")
+
+
+def prihlasit_prohlizecem():
+    yield from _prihlasit("prohlizec")
+
+
+def odhlasit():
+    with _zamek:
+        bezi = _beh["pipeline"] is not None
+    if bezi:
+        return "Právě běží dabing — odhlas se, až doběhne."
+    try:
+        zprava = ucet.odhlas()
+    except Exception as chyba:  # noqa: BLE001
+        zprava = f"Odhlášení se nepodařilo: {type(chyba).__name__}: {chyba}"
+    return f"{zprava}  \n{ucet.stav().popis}"
+
+
 with gr.Blocks(title="Dabing") as demo:
     gr.Markdown("# Dabing\nVideo z YouTube nebo souboru do češtiny či jiného jazyka: přepis, mluvčí, "
                 "překlad a hlas naklonovaný z originálu, ostatní zvuky zůstávají.")
+    with gr.Accordion("Codex účet (překlad)", open=False) as ucet_panel:
+        gr.Markdown("Překlad Codexem jede přes tvé předplatné ChatGPT (ne přes placené API). "
+                    "Přihlášení zůstane uložené v `codex_home/` tohoto labu, do gitu nejde.")
+        ucet_stav = gr.Markdown("Zjišťuji stav účtu…")
+        with gr.Row():
+            prihlas_kod = gr.Button("Přihlásit kódem", variant="primary")
+            prihlas_web = gr.Button("Přihlásit v prohlížeči")
+            odhlas = gr.Button("Odhlásit")
     with gr.Row():
         odkaz = gr.Textbox(label="Odkaz na YouTube", placeholder="https://youtu.be/…", scale=3)
         soubor = gr.File(label="…nebo vlastní video/zvuk", file_types=["video", "audio"],
@@ -213,6 +291,10 @@ with gr.Blocks(title="Dabing") as demo:
     spust.click(spustit, [odkaz, soubor, rezim, jazyk_videa, mluvci, jazyk], vystupy)
     pregen.click(pregenerovat, [id_zakazky, tabulka], vystupy)
     zrus.click(zrusit, None, stav)
+    prihlas_kod.click(prihlasit_kodem, None, ucet_stav)
+    prihlas_web.click(prihlasit_prohlizecem, None, ucet_stav)
+    odhlas.click(odhlasit, None, ucet_stav)
+    demo.load(ukaz_ucet, None, [ucet_stav, ucet_panel])
 
 
 if __name__ == "__main__":
