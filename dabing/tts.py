@@ -53,6 +53,15 @@ USEK_PRODLOUZENI = (0.62, 0.75)
 USEK_DOLADENI = (0.75, 0.88)
 USEK_IDENTITY = (0.88, 1.0)
 POKUSY_IDENTITY = 2       # kolikrát znovu namluvit větu, které ujel hlas (zůstane lepší pokus)
+# ECAPA dává krátkým větám přirozeně nižší podobnost (DevDay, moderátor: medián 0,45 u vět < 1 s,
+# 0,68 u 1–1,5 s, 0,83 u ≥ 4 s) — proti jednomu mediánu mluvčího by se přegenerovaly skoro všechny
+# krátké věty („Takže", „Děkuji") zbytečně a s falešným „HLAS NESEDÍ". Srovnává se proto s mediánem
+# vět podobné délky (malé skupiny se sloučí se sousedními).
+DELKY_IDENTITY_S = (1.0, 1.5, 2.5, 4.0)
+MIN_SKUPINA_IDENTITY = 10
+KRATKA_IDENTITA_S = 1.5   # kratší věty mají větší rozptyl podobnosti → větší odchylka
+IDENTITA_ODCHYLKA_KRATKE = 0.18
+MIN_DELKA_IDENTITA_S = 1.0  # kratší take: ECAPA šumí, absolutní minimum se nepoužije
 
 
 class WorkerSpadl(RuntimeError):
@@ -190,6 +199,28 @@ def slot(zakazka: Zakazka, i: int) -> float:
     konec_videa = zakazka.delka_s or v.end + MAX_POZICKA_S
     dalsi = zakazka.vety[i + 1].start if i + 1 < len(zakazka.vety) else min(v.end + MAX_POZICKA_S, konec_videa)
     return v.delka + max(0.0, min(dalsi - v.end - REZERVA_ZA_VETOU_S, MAX_POZICKA_S))
+
+
+def ocekavana_podobnost(vety: list[Veta]) -> dict[int, float]:
+    """Pro každou větu medián změřené podobnosti vět mluvčího podobné délky hlasu."""
+    def skupina(v: Veta) -> int:
+        return sum(v.vysledna_s >= h for h in DELKY_IDENTITY_S)
+
+    skupiny: dict[int, list[float]] = {}
+    for v in vety:
+        if v.identita is not None:
+            skupiny.setdefault(skupina(v), []).append(v.identita)
+    vysledek: dict[int, float] = {}
+    for v in vety:
+        s = skupina(v)
+        hodnoty = list(skupiny.get(s, []))
+        for vzdalenost in range(1, len(DELKY_IDENTITY_S) + 1):
+            if len(hodnoty) >= MIN_SKUPINA_IDENTITY:
+                break
+            hodnoty += skupiny.get(s - vzdalenost, []) + skupiny.get(s + vzdalenost, [])
+        if hodnoty:
+            vysledek[v.id] = float(np.median(hodnoty))
+    return vysledek
 
 
 class Hlas:
@@ -377,23 +408,27 @@ class Hlas:
             for v in self._po_vetach(vety, prubeh, (zacatek, stred), f"Kontrola hlasu M{m + 1}: měřím"):
                 v.identita = self._podobnost(v, srovnat(v))
                 v.qa = [q for q in v.qa if q not in ("hlas_ujel", "identita")]  # značky z dřívějška
-            hodnoty = [v.identita for v in vety if v.identita is not None]
-            if not hodnoty:
+            ocekavana = ocekavana_podobnost(vety)
+            if not ocekavana:
                 continue
-            median = float(np.median(hodnoty))
 
-            def ujel(podobnost: float | None) -> bool:
-                return podobnost is not None and (podobnost < median - IDENTITA_ODCHYLKA
-                                                  or podobnost < IDENTITA_MINIMUM)
+            def ujel(v: Veta) -> bool:
+                """Podobnost aktuálního take vybočuje z řady vět podobné délky (a věta nemá být
+                pod absolutním minimem — to jen u vět, na kterých ECAPA už něco měří)."""
+                if v.identita is None or v.id not in ocekavana:
+                    return False
+                odchylka = IDENTITA_ODCHYLKA_KRATKE if v.vysledna_s < KRATKA_IDENTITA_S else IDENTITA_ODCHYLKA
+                return (v.identita < ocekavana[v.id] - odchylka
+                        or (v.vysledna_s >= MIN_DELKA_IDENTITA_S and v.identita < IDENTITA_MINIMUM))
 
             def klic(stav: dict) -> tuple[bool, bool, float]:  # změřená > bez přesahu > podobnost
                 identita = stav["identita"]
                 return identita is not None, "presah" not in stav["qa"], identita if identita is not None else -1.0
 
-            ulet = [v for v in vety if ujel(v.identita)]
+            ulet = [v for v in vety if ujel(v)]
             for v in self._po_vetach(ulet, prubeh, (stred, konec), f"Kontrola hlasu M{m + 1}: opravuji"):
-                self.log(f"Věta {v.id}: hlas vybočil (podobnost {v.identita:.2f} vs medián "
-                         f"{median:.2f}) — namlouvám znovu")
+                self.log(f"Věta {v.id}: hlas vybočil (podobnost {v.identita:.2f} vs {ocekavana[v.id]:.2f} "
+                         f"u vět podobné délky) — namlouvám znovu")
                 zaloha = self.z.cesta(f"tts/veta_{v.id:04d}.identita.wav")
                 chyba: RuntimeError | None = None
                 try:
@@ -410,7 +445,7 @@ class Hlas:
                             v.identita = self._podobnost(v, srovnat(v))
                             if klic({"qa": v.qa, "identita": v.identita}) > klic(nejlepsi):
                                 nejlepsi = self._snimek(v, zaloha)
-                            if v.identita is not None and not ujel(v.identita) and "presah" not in v.qa:
+                            if v.identita is not None and not ujel(v) and "presah" not in v.qa:
                                 break
                     except RuntimeError as e:  # worker selhal (nebo zrušeno) — vrátit nejlepší pokus
                         chyba = e
@@ -421,14 +456,14 @@ class Hlas:
                             setattr(v, pole, hodnota)
                 finally:
                     zaloha.unlink(missing_ok=True)
-                if ujel(v.identita):
+                if ujel(v):
                     v.qa = [q for q in v.qa if q != "identita"] + ["hlas_ujel"]
                 self.z.uloz()  # take na disku a job.json vždy spolu
                 if isinstance(chyba, Zruseno):
                     raise chyba
                 if chyba is not None:
                     self.log(f"Věta {v.id}: nový pokus selhal ({chyba}) — nechávám lepší verzi")
-            opraveno = sum(1 for v in ulet if not ujel(v.identita))
+            opraveno = sum(1 for v in ulet if not ujel(v))
             prubeh(konec, f"Kontrola hlasu M{m + 1}: opraveno {opraveno} z {len(ulet)}")
             if len(ulet) > opraveno:
                 self.log(f"Mluvčí M{m + 1}: {len(ulet) - opraveno} vět má pořád hlas mimo řadu — "
