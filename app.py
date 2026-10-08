@@ -151,7 +151,7 @@ def _prubeh_behu(prace_s_pipeline):
 
 
 def spustit(odkaz: str, soubor, rezim: str, jazyk_videa: str, mluvci: str, jazyk: str,
-            pohlavi: str = ""):
+            pohlavi: str = "", snimky: bool = False):
     zdroj = (soubor if isinstance(soubor, str) else getattr(soubor, "name", None)) or (odkaz or "").strip()
     if not zdroj:
         yield "", "Vlož odkaz na YouTube nebo nahraj soubor.", gr.skip(), gr.skip(), gr.skip(), gr.skip()
@@ -166,7 +166,7 @@ def spustit(odkaz: str, soubor, rezim: str, jazyk_videa: str, mluvci: str, jazyk
             return
     pocet = None if mluvci == "Automaticky" else int(mluvci)
     yield from _prubeh_behu(lambda p: p.cely(zdroj, JAZYKY[jazyk], REZIMY[rezim], pocet,
-                                             JAZYKY_ZDROJE[jazyk_videa], _pohlavi(pohlavi)))
+                                             JAZYKY_ZDROJE[jazyk_videa], _pohlavi(pohlavi), snimky))
 
 
 def pregenerovat(id_zakazky: str, tabulka):
@@ -287,6 +287,10 @@ with gr.Blocks(title="Dabing") as demo:
         pohlavi = gr.Textbox(label="Pohlaví mluvčích (volitelně)", placeholder="např. 1 ž, 2 m", scale=1,
                              info="Pohlaví se pozná z hlasu; sem napiš jen když to nesedí. "
                                   "Číslo mluvčího jako v tabulce (M1 = 1). Rozhoduje o rodu sloves v překladu.")
+    snimky = gr.Checkbox(label="Když to z hlasu nepoznám (dítě, hranice), nechat Codex podívat se na 3 snímky videa",
+                         value=False,
+                         info="Jediný případ, kdy z Macu odejde obraz (ne text); na snímcích bývají obličeje. "
+                              "Bez zaškrtnutí se nic neposílá a rod se určí z kontextu.")
     with gr.Row():
         spust = gr.Button("Spustit", variant="primary", scale=3)
         zrus = gr.Button("Zrušit", variant="stop", scale=1)
@@ -303,7 +307,7 @@ with gr.Blocks(title="Dabing") as demo:
     id_zakazky = gr.State("")
 
     vystupy = [log, stav, video, soubory, tabulka, id_zakazky]
-    spust.click(spustit, [odkaz, soubor, rezim, jazyk_videa, mluvci, jazyk, pohlavi], vystupy)
+    spust.click(spustit, [odkaz, soubor, rezim, jazyk_videa, mluvci, jazyk, pohlavi, snimky], vystupy)
     pregen.click(pregenerovat, [id_zakazky, tabulka], vystupy)
     zrus.click(zrusit, None, stav)
     prihlas_kod.click(prihlasit_kodem, None, ucet_stav)

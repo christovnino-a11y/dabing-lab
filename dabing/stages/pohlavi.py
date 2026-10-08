@@ -4,6 +4,8 @@ Překladatel text slyší jen jako text a rod by hádal. Hlas, který dabing nak
 pohlaví má, takže se změří: medián základní frekvence (F0) z čistých vět každého mluvčího
 (Demucs hlas, 16 kHz). Mužský hlas v řeči má F0 kolem 85–155 Hz, ženský kolem 165–255 Hz;
 mezi 150 a 165 Hz je pásmo, kde se údaj nepoužije („?") a překladatel rod určí z kontextu.
+Hlas nad 250 Hz je u dospělých vzácný (dítě, nebo velmi vysoký ženský hlas) a u dětí se
+chlapec od dívky z hlasu nepozná — i to je „?" (pipeline ho pak může ověřit na snímcích).
 
 Vstup:  job.json (věty s mluvčím), vocals16.wav
 Výstup: pohlavi.json {mluvci: {"pohlavi": "m"|"z"|"?", "f0": Hz, "vteriny": délka vzorku}}
@@ -23,6 +25,7 @@ MIN_VETA_S = 1.0
 MIN_RAMCU = 30            # méně hlasových rámců = údaj nelze vzít vážně
 HRANICE_MUZ_HZ = 150.0
 HRANICE_ZENA_HZ = 165.0
+HRANICE_VYSOKY_HZ = 250.0     # nad tím nelze určit podle hlasu (dítě)
 PRAVDEPODOBNOST_HLASU = 0.4
 
 
@@ -31,6 +34,8 @@ def urci(f0_hz: float | None) -> str:
         return "?"
     if f0_hz <= HRANICE_MUZ_HZ:
         return "m"
+    if f0_hz >= HRANICE_VYSOKY_HZ:
+        return "?"
     if f0_hz >= HRANICE_ZENA_HZ:
         return "z"
     return "?"

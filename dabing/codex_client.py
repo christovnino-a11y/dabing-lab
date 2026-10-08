@@ -61,6 +61,11 @@ def text(obsah: str) -> dict[str, str]:
     return {"type": "text", "text": obsah}
 
 
+def obrazek(path: str | Path) -> dict[str, str]:
+    """Vstupní položka turnu s obrázkem (jpg/png)."""
+    return {"type": "localImage", "path": str(Path(path).resolve())}
+
+
 def _slovnik(payload: Any) -> dict:
     if hasattr(payload, "model_dump"):
         return payload.model_dump(by_alias=True, mode="json", exclude_none=True)

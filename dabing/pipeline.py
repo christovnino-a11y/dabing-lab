@@ -16,7 +16,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from . import media, mix, segmenty, translate
+from . import media, mix, segmenty, snimky, translate
 from .config import JOBS, LAB, MODEL_DIALOG_CHECKPOINT, PYTHON, offline_env
 from .job import Zakazka, id_ze_souboru
 from .tts import Hlas, Zruseno
@@ -93,7 +93,8 @@ class Pipeline:
             raise RuntimeError(f"Krok {modul} selhal (kód {kod}):\n" + "\n".join(posledni[-8:]))
 
     def priprav(self, zdroj: str, jazyk: str, prekladac: str, pocet_mluvcich: int | None,
-                jazyk_zdroje: str = "auto", pohlavi_rucne: dict | None = None) -> Zakazka:
+                jazyk_zdroje: str = "auto", pohlavi_rucne: dict | None = None,
+                snimky_pohlavi: bool | None = None) -> Zakazka:
         """Založí nebo načte zakázku a stáhne/zkopíruje zdroj."""
         hlaseni = self._faze("stazeni")
         cesta = Path(zdroj).expanduser()
@@ -126,6 +127,8 @@ class Pipeline:
             z.popis = info["popis"]
         if pohlavi_rucne is not None:
             z.pohlavi_rucne = pohlavi_rucne  # prázdné = určit z hlasu; změnu pozná _pohlavi
+        if snimky_pohlavi is not None:
+            z.snimky_pohlavi = snimky_pohlavi
         z.slozka.mkdir(parents=True, exist_ok=True)
         z.uloz()
         self.log(f"Zakázka {z.id}: {z.nazev} ({z.delka_s / 60:.1f} min)")
@@ -207,6 +210,19 @@ class Pipeline:
             except (RuntimeError, OSError, ValueError) as chyba:
                 self.log(f"Pohlaví mluvčích se nepodařilo změřit, rod se určí z kontextu: {chyba}")
         z.pohlavi = {m: x["pohlavi"] for m, x in zmereno.items() if x.get("pohlavi") in ("m", "z")}
+        if z.snimky_pohlavi:  # hlas nerozhodl (hranice, dítě) → pojistka ze snímků, jen se souhlasem
+            for m in sorted(mluvci - set(z.pohlavi) - set(z.pohlavi_rucne), key=int):
+                if m not in z.pohlavi_ze_snimku:
+                    try:
+                        rod, duvod = snimky.pohlavi_ze_snimku(z, int(m), (zmereno.get(m) or {}).get("f0"), self.log)
+                    except Zruseno:
+                        raise
+                    except Exception as chyba:  # noqa: BLE001 — pojistka nesmí zastavit dabing
+                        rod, duvod = None, f"{type(chyba).__name__}: {chyba}"
+                    z.pohlavi_ze_snimku[m] = rod or ""
+                    self.log(f"Mluvčí M{int(m) + 1} ze snímků: {({'m': 'muž', 'z': 'žena'}).get(rod, 'nepoznáno')} ({duvod})")
+                if z.pohlavi_ze_snimku[m] in ("m", "z"):
+                    z.pohlavi[m] = z.pohlavi_ze_snimku[m]
         z.pohlavi.update(z.pohlavi_rucne)
         for v in z.vety:
             v.pohlavi = z.pohlavi.get(str(v.mluvci), "")
@@ -312,8 +328,10 @@ class Pipeline:
             self.log(f"Kontrola: {spatne} vět je špatně srozumitelných — zkontroluj je v tabulce.")
 
     def cely(self, zdroj: str, jazyk: str, prekladac: str, pocet_mluvcich: int | None,
-             jazyk_zdroje: str = "auto", pohlavi_rucne: dict | None = None) -> tuple[Zakazka, dict[str, Path]]:
-        z = self.priprav(zdroj, jazyk, prekladac, pocet_mluvcich, jazyk_zdroje, pohlavi_rucne)
+             jazyk_zdroje: str = "auto", pohlavi_rucne: dict | None = None,
+             snimky_pohlavi: bool | None = None) -> tuple[Zakazka, dict[str, Path]]:
+        z = self.priprav(zdroj, jazyk, prekladac, pocet_mluvcich, jazyk_zdroje, pohlavi_rucne,
+                         snimky_pohlavi)
         self.analyzuj(z)
         self.kotvy(z)
         self.preloz(z)
