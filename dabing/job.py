@@ -24,6 +24,7 @@ class Veta:
     start: float
     end: float
     mluvci: int = 0
+    pohlavi: str = ""               # pohlaví mluvčího "m"/"z" (z výšky hlasu nebo ručně) — rod v překladu
     en: str = ""                    # text z přepisu (přesně k času; i text reference hlasu)
     en_titulky: str = ""            # text z titulků YouTube, kde se liší od přepisu (jde do překladu)
     en_opraveno: str = ""           # totéž s jmény a čísly ověřenými Codexem na webu (jde do překladu)
@@ -73,6 +74,9 @@ class Zakazka:
     kroky: dict[str, str] = field(default_factory=dict)  # krok -> čas dokončení
     codex: dict = field(default_factory=dict)            # tokeny a kvóta
     rychlost_hlasu: dict = field(default_factory=dict)   # mluvčí → znaků/s změřeno z kotvy
+    pohlavi: dict = field(default_factory=dict)          # mluvčí → "m"/"z" použité pro rod v překladu
+    pohlavi_rucne: dict = field(default_factory=dict)    # mluvčí → "m"/"z" zadané v UI (přebije měření)
+    rod_prekladu: str = ""          # pro jaké pohlaví mluvčích se překládalo (změna → překlad znovu)
     vety: list[Veta] = field(default_factory=list)
 
     # ------------------------------------------------------------ soubory

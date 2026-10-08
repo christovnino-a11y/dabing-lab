@@ -93,7 +93,7 @@ class Pipeline:
             raise RuntimeError(f"Krok {modul} selhal (kód {kod}):\n" + "\n".join(posledni[-8:]))
 
     def priprav(self, zdroj: str, jazyk: str, prekladac: str, pocet_mluvcich: int | None,
-                jazyk_zdroje: str = "auto") -> Zakazka:
+                jazyk_zdroje: str = "auto", pohlavi_rucne: dict | None = None) -> Zakazka:
         """Založí nebo načte zakázku a stáhne/zkopíruje zdroj."""
         hlaseni = self._faze("stazeni")
         cesta = Path(zdroj).expanduser()
@@ -124,6 +124,8 @@ class Pipeline:
                         vytvoreno=time.strftime("%Y-%m-%d %H:%M:%S"))
         if info:
             z.popis = info["popis"]
+        if pohlavi_rucne is not None:
+            z.pohlavi_rucne = pohlavi_rucne  # prázdné = určit z hlasu; změnu pozná _pohlavi
         z.slozka.mkdir(parents=True, exist_ok=True)
         z.uloz()
         self.log(f"Zakázka {z.id}: {z.nazev} ({z.delka_s / 60:.1f} min)")
@@ -184,6 +186,51 @@ class Pipeline:
             self._faze("vety")(0.5, "Skládám věty…")
             segmenty.uloz_vety(z)
             self.log(f"{len(z.vety)} vět, mluvčích: {len({v.mluvci for v in z.vety})}")
+        self._pohlavi(z)
+
+    def _pohlavi(self, z: Zakazka) -> None:
+        """Pohlaví mluvčích z výšky hlasu (stages/pohlavi.py) → rod v překladu. Ručně zadané
+        (`pohlavi_rucne`) má přednost; neměřitelné nebo nejisté pásmo se překladači neřekne.
+        Selhání dabing nezastaví, rod se pak určuje z kontextu."""
+        cesta = z.cesta("pohlavi.json")
+        mluvci = {str(v.mluvci) for v in z.vety}
+        zmereno: dict = {}
+        vstupy = [z.cesta(j) for j in ("asr.json", "diar.json", "vocals16.wav") if z.cesta(j).exists()]
+        if cesta.exists() and all(cesta.stat().st_mtime >= f.stat().st_mtime for f in vstupy):
+            zmereno = json.loads(cesta.read_text(encoding="utf-8"))
+        if not mluvci <= set(zmereno):
+            try:
+                self._krok("pohlavi", z, "vety")
+                zmereno = json.loads(cesta.read_text(encoding="utf-8"))
+            except Zruseno:
+                raise
+            except (RuntimeError, OSError, ValueError) as chyba:
+                self.log(f"Pohlaví mluvčích se nepodařilo změřit, rod se určí z kontextu: {chyba}")
+        z.pohlavi = {m: x["pohlavi"] for m, x in zmereno.items() if x.get("pohlavi") in ("m", "z")}
+        z.pohlavi.update(z.pohlavi_rucne)
+        for v in z.vety:
+            v.pohlavi = z.pohlavi.get(str(v.mluvci), "")
+        popis = []
+        for m in sorted(mluvci, key=int):
+            f0 = (zmereno.get(m) or {}).get("f0")
+            rod = {"m": "muž", "z": "žena"}.get(z.pohlavi.get(m, ""), "neurčeno")
+            popis.append(f"M{int(m) + 1} {rod}" + (" (zadáno ručně)" if m in z.pohlavi_rucne else
+                                                  f" ({f0:.0f} Hz)" if f0 else ""))
+        self.log("Pohlaví mluvčích: " + ", ".join(popis))
+        if any(z.pohlavi.get(m) is None for m in mluvci):
+            self.log("U mluvčích s „neurčeno“ se rod určí z kontextu; jde nastavit ručně v poli "
+                     "„Pohlaví mluvčích“.")
+        klic = json.dumps(z.pohlavi, sort_keys=True)
+        if z.pohlavi and z.jazyk != "en" and "preklad" in z.kroky and z.rod_prekladu != klic:
+            # překlad vznikl bez znalosti pohlaví (nebo s jiným) → rod sloves by neseděl s hlasem
+            self.log("Pohlaví mluvčích se od posledního překladu změnilo — překládám znovu "
+                     "(věty s nezměněným textem se nenamlouvají znovu).")
+            for v in z.vety:
+                if not v.upraveno:
+                    v.cs = ""
+            z.kroky.pop("preklad", None)
+            z.kroky.pop("hlas", None)
+        z.uloz()
 
     def _efekty(self, z: Zakazka, faze: str = "pozadi") -> None:
         """BandIt najde v hlasové stopě Demucsu jásot, potlesk a smích; mix je vrátí do pozadí.
@@ -223,6 +270,8 @@ class Pipeline:
         kdo = "Codex" if z.prekladac == "codex" else "lokální model v LM Studiu"
         self.log(f"Překládám ({kdo})…")
         translate.preloz(z, self.log, self._faze("preklad"))
+        z.rod_prekladu = json.dumps(z.pohlavi, sort_keys=True)
+        z.uloz()
         if z.prekladac == "codex" and z.codex:
             self.log(f"Codex: {z.codex.get('turny')} turnů, kvóta "
                      f"{z.codex.get('kvota_pred_%')} % → {z.codex.get('kvota_po_%')} %")
@@ -263,8 +312,8 @@ class Pipeline:
             self.log(f"Kontrola: {spatne} vět je špatně srozumitelných — zkontroluj je v tabulce.")
 
     def cely(self, zdroj: str, jazyk: str, prekladac: str, pocet_mluvcich: int | None,
-             jazyk_zdroje: str = "auto") -> tuple[Zakazka, dict[str, Path]]:
-        z = self.priprav(zdroj, jazyk, prekladac, pocet_mluvcich, jazyk_zdroje)
+             jazyk_zdroje: str = "auto", pohlavi_rucne: dict | None = None) -> tuple[Zakazka, dict[str, Path]]:
+        z = self.priprav(zdroj, jazyk, prekladac, pocet_mluvcich, jazyk_zdroje, pohlavi_rucne)
         self.analyzuj(z)
         self.kotvy(z)
         self.preloz(z)

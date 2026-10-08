@@ -61,6 +61,9 @@ SCHEMA_PREKLAD = {
 }
 
 
+ROD_MLUVCIHO = {"m": "muž", "z": "žena"}
+
+
 def pokyny(jazyk: str, zdroj: str = "auto") -> str:
     cilovy = NAZVY_JAZYKU.get(jazyk, jazyk)
     odkud = ZE_JAZYKA.get(zdroj, ZE_JAZYKA["auto"])
@@ -102,6 +105,12 @@ Dostaneš očíslované věty z videa (mluvčí, text originálu v poli `en` a l
   (to jsou titulky).
   Pole se jmenuje `cs`, i když cílový jazyk není čeština — obsahuje překlad do cílového jazyka.
 - Oslovení (tykání/vykání) drž konzistentní podle kontextu.
+- Pole `pohlavi_mluvciho` (muž/žena) je pohlaví hlasu, kterým se věta namluví — změřené, ne hádané.
+  V jazycích, kde se rod pozná na slovesech a přídavných jménech (čeština, slovenština, polština,
+  ruština, němčina…), mluv o sobě v tomhle rodě: žena „řekla jsem", „byla jsem ráda", muž „řekl
+  jsem", „byl jsem rád". Platí i pro oslovení a příčestí (např. „ukázala jsem", „zapomněl jsem").
+  Když pole chybí, rod mluvčího neznáš: určuj ho z kontextu (jméno, oslovení druhými), jinak raději
+  formulaci bez rodu (např. „mám rád" místo „byl jsem rád"). O druhých mluv v jejich rodě podle smyslu.
 - Nic nepřidávej, nekomentuj a nepoužívej žádné nástroje ani soubory.
 Vrať JSON podle schématu: pro každé id pole `cs` a `vyslov` a glosář použitých termínů."""
 
@@ -198,6 +207,8 @@ def _zadani(davka: list[Veta], kontext: list[Veta], glosar: list[dict], rezim: s
     def veta(v: Veta) -> dict:
         zaklad = {"id": v.id, "mluvci": f"M{v.mluvci + 1}", "en": v.en_preklad,
                   "originál_trvá_s": round(v.delka, 1), **_sousedi(v, podle_id, v_davce)}
+        if v.pohlavi in ROD_MLUVCIHO:
+            zaklad["pohlavi_mluvciho"] = ROD_MLUVCIHO[v.pohlavi]
         if v.en_preklad != v.en:
             zaklad["prepis_stt"] = v.en
         if v.prirozena_s and rezim != "preklad":
