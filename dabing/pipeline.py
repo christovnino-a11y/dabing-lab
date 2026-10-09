@@ -16,9 +16,10 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from . import media, mix, segmenty, snimky, translate
+from . import media, mix, rozdeleni, segmenty, snimky, translate
 from .config import JOBS, LAB, MODEL_DIALOG_CHECKPOINT, PYTHON, offline_env
 from .job import Zakazka, id_ze_souboru
+from .stages import pohlavi as pohlavi_stage
 from .tts import Hlas, Zruseno
 
 Log = Callable[[str], None]
@@ -211,6 +212,21 @@ class Pipeline:
                 self.log(f"Pohlaví mluvčích se nepodařilo změřit, rod se určí z kontextu: {chyba}")
         stare = {v.id: v.pohlavi for v in z.vety}
         presunuto = self._rozdel_smichane(z, zmereno)
+        if zmereno and z.cesta("vocals16.wav").exists():
+            # muž a žena s podobně vysokým hlasem: výška je nerozliší, otisk hlasu (ECAPA) ano
+            kandidati = rozdeleni.kandidati(zmereno)
+            if kandidati:
+                self._faze("vety")(0.9, "Ověřuji otiskem hlasu, jestli mluvčí nejsou dva lidé…")
+                try:
+                    dva = rozdeleni.rozdel(z, zmereno, self.log)
+                except Zruseno:
+                    raise
+                except Exception as chyba:  # noqa: BLE001 — rozdělení nesmí zastavit dabing
+                    self.log(f"Ověření mluvčích otiskem hlasu selhalo: {type(chyba).__name__}: {chyba}")
+                    dva = {}
+                for m, ids in dva.items():
+                    presunuto += self._presun(z, zmereno, m, set(ids), "podle otisku hlasu")
+                cesta.write_text(json.dumps(zmereno, ensure_ascii=False, indent=1), encoding="utf-8")
         if presunuto:
             cesta.write_text(json.dumps(zmereno, ensure_ascii=False, indent=1), encoding="utf-8")
             mluvci = {str(v.mluvci) for v in z.vety}
@@ -257,43 +273,47 @@ class Pipeline:
         z.uloz()
 
     def _rozdel_smichane(self, z: Zakazka, zmereno: dict) -> int:
-        """Mluvčí, ve kterém krok pohlaví našel dvě oddělené skupiny hlasů (muži × ženy), se
-        rozdělí: větší skupina zůstane, menší dostane nové číslo mluvčího. Věty, které se nedaly
-        změřit (krátké), jdou k nejbližší změřené větě téhož mluvčího (do 10 s). Změní `zmereno`
-        (nový mluvčí, bez `smisene`). Vrací počet přesunutých vět."""
+        """Mluvčí, ve kterém krok pohlaví našel dvě oddělené skupiny výšky hlasu (muži × ženy),
+        se rozdělí: menší skupina dostane nové číslo mluvčího. Vrací počet přesunutých vět."""
         presunuto = 0
         for m in [m for m, x in zmereno.items() if x.get("smisene")]:
             skupiny = zmereno[m].pop("smisene")
-            vety_m = [v for v in z.vety if str(v.mluvci) == m]
-            zmerene = {v.id: ("m" if v.id in skupiny["m"] else "z" if v.id in skupiny["z"] else "")
-                       for v in vety_m if v.id in skupiny["m"] or v.id in skupiny["z"]}
-            vetsi = "m" if len(skupiny["m"]) >= len(skupiny["z"]) else "z"
-            mensi = "z" if vetsi == "m" else "m"
-            k_presunu = {v.id for v in vety_m if zmerene.get(v.id) == mensi}
-            body = [(v.start, zmerene[v.id]) for v in vety_m if v.id in zmerene]
-            for v in vety_m:
-                if v.id in zmerene or not body:
-                    continue
-                vzdalenost, skupina = min((abs(v.start - t), g) for t, g in body)
-                if vzdalenost <= 10.0 and skupina == mensi:
-                    k_presunu.add(v.id)
-            novy = max(int(x) for x in zmereno) + 1
-            vety_vetsi = {k: f for k, f in zmereno[m]["vety"].items() if int(k) in skupiny[vetsi]}
-            vety_mensi = {k: f for k, f in zmereno[m]["vety"].items() if int(k) in skupiny[mensi]}
-            for v in vety_m:
-                if v.id in k_presunu:
-                    v.mluvci = novy
-                    v.reference, v.druh_reference, v.tts_otisk = "", "", ""  # nový hlas, nová reference
-            med = lambda d: round(sorted(d.values())[len(d) // 2], 1)  # noqa: E731
-            zmereno[m].update(vety=vety_vetsi, f0=med(vety_vetsi), pohlavi=vetsi, ramcu=len(vety_vetsi))
-            zmereno[str(novy)] = {"pohlavi": mensi, "f0": med(vety_mensi), "vety": vety_mensi,
-                                  "ramcu": len(vety_mensi)}
-            self.log(f"Mluvčí M{int(m) + 1} byl smíchaný (diarizace slila dva lidi: "
-                     f"{len(skupiny['m'])}× mužský a {len(skupiny['z'])}× ženský hlas) — "
-                     f"{len(k_presunu)} vět ({'muž' if mensi == 'm' else 'žena'}) přesunuto k novému "
-                     f"mluvčímu M{novy + 1}.")
-            presunuto += len(k_presunu)
+            mensi = "z" if len(skupiny["m"]) >= len(skupiny["z"]) else "m"
+            presunuto += self._presun(z, zmereno, m, set(skupiny[mensi]),
+                                      f"podle výšky hlasu: {len(skupiny['m'])}× mužský a "
+                                      f"{len(skupiny['z'])}× ženský")
         return presunuto
+
+    def _presun(self, z: Zakazka, zmereno: dict, m: str, ids: set[int], proc: str) -> int:
+        """Věty `ids` mluvčího `m` k novému mluvčímu (druhý člověk, kterého diarizace slila s `m`).
+        Nezměřené (krátké) věty jdou k nejbližší změřené větě téhož mluvčího (do 10 s). Nový
+        mluvčí dostane vlastní referenci a klon; pohlaví obou se určí znovu z jejich vět."""
+        vety_m = [v for v in z.vety if str(v.mluvci) == m]
+        f0 = {int(k): f for k, f in (zmereno[m].get("vety") or {}).items()}
+        body = [(v.start, v.id in ids) for v in vety_m if v.id in f0 or v.id in ids]
+        k_presunu = set(ids)
+        for v in vety_m:
+            if v.id not in f0 and v.id not in ids and body:
+                vzdalenost, druhy = min((abs(v.start - t), d) for t, d in body)
+                if vzdalenost <= 10.0 and druhy:
+                    k_presunu.add(v.id)
+        novy = max(int(x) for x in zmereno) + 1
+        for v in vety_m:
+            if v.id in k_presunu:
+                v.mluvci = novy
+                v.reference, v.druh_reference, v.tts_otisk = "", "", ""  # nový hlas, nová reference
+        zustava = {k: f for k, f in f0.items() if k not in k_presunu}
+        odchazi = {k: f for k, f in f0.items() if k in k_presunu}
+        for klic, skupina in ((m, zustava), (str(novy), odchazi)):
+            hodnoty = sorted(skupina.values())
+            stred = round(hodnoty[len(hodnoty) // 2], 1) if hodnoty else None
+            zaznam = zmereno.setdefault(klic, {})
+            zaznam.update(vety={str(k): f for k, f in skupina.items()}, f0=stred,
+                          pohlavi=pohlavi_stage.urci(stred), ramcu=len(hodnoty), hlas_overen=True)
+            z.pohlavi_ze_snimku.pop(klic, None)  # snímky se týkaly smíchané skupiny → znovu
+        self.log(f"Mluvčí M{int(m) + 1} byl smíchaný (diarizace slila dva lidi, {proc}) — "
+                 f"{len(k_presunu)} vět přesunuto k novému mluvčímu M{novy + 1}.")
+        return len(k_presunu)
 
     def _efekty(self, z: Zakazka, faze: str = "pozadi") -> None:
         """BandIt najde v hlasové stopě Demucsu jásot, potlesk a smích; mix je vrátí do pozadí.
