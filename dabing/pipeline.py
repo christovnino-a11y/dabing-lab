@@ -192,9 +192,9 @@ class Pipeline:
         self._pohlavi(z)
 
     def _pohlavi(self, z: Zakazka) -> None:
-        """Pohlaví mluvčích z výšky hlasu (stages/pohlavi.py) → rod v překladu. Ručně zadané
-        (`pohlavi_rucne`) má přednost; neměřitelné nebo nejisté pásmo se překladači neřekne.
-        Selhání dabing nezastaví, rod se pak určuje z kontextu."""
+        """Pohlaví mluvčích z výšky hlasu (stages/pohlavi.py) → rod v překladu. Mluvčího, ve kterém
+        diarizace smíchala muže a ženu, rozdělí na dva. Ručně zadané (`pohlavi_rucne`) má
+        přednost; nejisté pásmo se překladači neřekne. Selhání dabing nezastaví."""
         cesta = z.cesta("pohlavi.json")
         mluvci = {str(v.mluvci) for v in z.vety}
         zmereno: dict = {}
@@ -209,6 +209,11 @@ class Pipeline:
                 raise
             except (RuntimeError, OSError, ValueError) as chyba:
                 self.log(f"Pohlaví mluvčích se nepodařilo změřit, rod se určí z kontextu: {chyba}")
+        stare = {v.id: v.pohlavi for v in z.vety}
+        presunuto = self._rozdel_smichane(z, zmereno)
+        if presunuto:
+            cesta.write_text(json.dumps(zmereno, ensure_ascii=False, indent=1), encoding="utf-8")
+            mluvci = {str(v.mluvci) for v in z.vety}
         z.pohlavi = {m: x["pohlavi"] for m, x in zmereno.items() if x.get("pohlavi") in ("m", "z")}
         if z.snimky_pohlavi:  # hlas nerozhodl (hranice, dítě) → pojistka ze snímků, jen se souhlasem
             for m in sorted(mluvci - set(z.pohlavi) - set(z.pohlavi_rucne), key=int):
@@ -236,17 +241,59 @@ class Pipeline:
         if any(z.pohlavi.get(m) is None for m in mluvci):
             self.log("U mluvčích s „neurčeno“ se rod určí z kontextu; jde nastavit ručně v poli "
                      "„Pohlaví mluvčích“.")
-        klic = json.dumps(z.pohlavi, sort_keys=True)
-        if z.pohlavi and z.jazyk != "en" and "preklad" in z.kroky and z.rod_prekladu != klic:
-            # překlad vznikl bez znalosti pohlaví (nebo s jiným) → rod sloves by neseděl s hlasem
-            self.log("Pohlaví mluvčích se od posledního překladu změnilo — překládám znovu "
-                     "(věty s nezměněným textem se nenamlouvají znovu).")
-            for v in z.vety:
-                if not v.upraveno:
+        if z.jazyk != "en" and "preklad" in z.kroky:
+            # překlad vznikl bez znalosti pohlaví (nebo s jiným, nebo u jiného mluvčího) → rod
+            # sloves by neseděl s hlasem; mažou se jen dotčené věty, ostatní zůstanou
+            dotcene = [v for v in z.vety if v.cs and not v.upraveno and stare[v.id] != v.pohlavi]
+            if dotcene:
+                self.log(f"Pohlaví mluvčích se od překladu změnilo u {len(dotcene)} vět — překládám je "
+                         "znovu (věty s nezměněným textem se nenamlouvají znovu).")
+                for v in dotcene:
                     v.cs = ""
-            z.kroky.pop("preklad", None)
+                    v.zkraceno = False
+                z.kroky.pop("preklad", None)
+        if presunuto or any(not v.cs for v in z.vety):
             z.kroky.pop("hlas", None)
         z.uloz()
+
+    def _rozdel_smichane(self, z: Zakazka, zmereno: dict) -> int:
+        """Mluvčí, ve kterém krok pohlaví našel dvě oddělené skupiny hlasů (muži × ženy), se
+        rozdělí: větší skupina zůstane, menší dostane nové číslo mluvčího. Věty, které se nedaly
+        změřit (krátké), jdou k nejbližší změřené větě téhož mluvčího (do 10 s). Změní `zmereno`
+        (nový mluvčí, bez `smisene`). Vrací počet přesunutých vět."""
+        presunuto = 0
+        for m in [m for m, x in zmereno.items() if x.get("smisene")]:
+            skupiny = zmereno[m].pop("smisene")
+            vety_m = [v for v in z.vety if str(v.mluvci) == m]
+            zmerene = {v.id: ("m" if v.id in skupiny["m"] else "z" if v.id in skupiny["z"] else "")
+                       for v in vety_m if v.id in skupiny["m"] or v.id in skupiny["z"]}
+            vetsi = "m" if len(skupiny["m"]) >= len(skupiny["z"]) else "z"
+            mensi = "z" if vetsi == "m" else "m"
+            k_presunu = {v.id for v in vety_m if zmerene.get(v.id) == mensi}
+            body = [(v.start, zmerene[v.id]) for v in vety_m if v.id in zmerene]
+            for v in vety_m:
+                if v.id in zmerene or not body:
+                    continue
+                vzdalenost, skupina = min((abs(v.start - t), g) for t, g in body)
+                if vzdalenost <= 10.0 and skupina == mensi:
+                    k_presunu.add(v.id)
+            novy = max(int(x) for x in zmereno) + 1
+            vety_vetsi = {k: f for k, f in zmereno[m]["vety"].items() if int(k) in skupiny[vetsi]}
+            vety_mensi = {k: f for k, f in zmereno[m]["vety"].items() if int(k) in skupiny[mensi]}
+            for v in vety_m:
+                if v.id in k_presunu:
+                    v.mluvci = novy
+                    v.reference, v.druh_reference, v.tts_otisk = "", "", ""  # nový hlas, nová reference
+            med = lambda d: round(sorted(d.values())[len(d) // 2], 1)  # noqa: E731
+            zmereno[m].update(vety=vety_vetsi, f0=med(vety_vetsi), pohlavi=vetsi, ramcu=len(vety_vetsi))
+            zmereno[str(novy)] = {"pohlavi": mensi, "f0": med(vety_mensi), "vety": vety_mensi,
+                                  "ramcu": len(vety_mensi)}
+            self.log(f"Mluvčí M{int(m) + 1} byl smíchaný (diarizace slila dva lidi: "
+                     f"{len(skupiny['m'])}× mužský a {len(skupiny['z'])}× ženský hlas) — "
+                     f"{len(k_presunu)} vět ({'muž' if mensi == 'm' else 'žena'}) přesunuto k novému "
+                     f"mluvčímu M{novy + 1}.")
+            presunuto += len(k_presunu)
+        return presunuto
 
     def _efekty(self, z: Zakazka, faze: str = "pozadi") -> None:
         """BandIt najde v hlasové stopě Demucsu jásot, potlesk a smích; mix je vrátí do pozadí.
@@ -286,8 +333,6 @@ class Pipeline:
         kdo = "Codex" if z.prekladac == "codex" else "lokální model v LM Studiu"
         self.log(f"Překládám ({kdo})…")
         translate.preloz(z, self.log, self._faze("preklad"))
-        z.rod_prekladu = json.dumps(z.pohlavi, sort_keys=True)
-        z.uloz()
         if z.prekladac == "codex" and z.codex:
             self.log(f"Codex: {z.codex.get('turny')} turnů, kvóta "
                      f"{z.codex.get('kvota_pred_%')} % → {z.codex.get('kvota_po_%')} %")

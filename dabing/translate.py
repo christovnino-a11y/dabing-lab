@@ -388,8 +388,11 @@ def _pouzij(vysledek: dict, podle_id: dict[int, Veta], zkraceni: bool,
 
 
 def preloz(zakazka: Zakazka, log: Log, prubeh: Callable[[float, str], None]) -> None:
-    """Přeloží všechny věty bez ručně upraveného textu a přetečené dávkově zkrátí."""
-    vety = [v for v in zakazka.vety if not v.upraveno]
+    """Přeloží věty bez překladu a bez ručně upraveného textu (u nového videa všechny) a přetečené
+    dávkově zkrátí. Když už část vět překlad má (po změně pohlaví mluvčího se smazaly jen dotčené,
+    nebo předchozí běh spadl), překládá jen zbytek a webové ověření jmen se nezopakuje."""
+    castecne = any(v.cs for v in zakazka.vety if not v.upraveno)
+    vety = [v for v in zakazka.vety if not v.upraveno and not v.cs]
     if not vety:
         return
     podle_id = {v.id: v for v in zakazka.vety}
@@ -403,7 +406,9 @@ def preloz(zakazka: Zakazka, log: Log, prubeh: Callable[[float, str], None]) -> 
         log(f"Text vět beru z titulků od autora videa; od našeho přepisu se liší u {lisi} vět "
             "— překladač uvidí obojí. Časy zůstávají z přepisu.")
     with _klient(zakazka, log) as klient:
-        if isinstance(klient, _Codex):  # LM Studio web nemá
+        if castecne:
+            log(f"Překládám jen {len(vety)} vět bez překladu (ostatní zůstávají).")
+        elif isinstance(klient, _Codex):  # LM Studio web nemá
             _over_jmena(klient, zakazka, log, video, prubeh)
         for i, davka in enumerate(davky):
             prubeh(i / max(len(davky), 1), f"Překládám dávku {i + 1}/{len(davky)}…")
