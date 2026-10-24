@@ -1,7 +1,8 @@
-"""Pohlaví mluvčího ze snímků videa — pojistka, když ho nejde určit z hlasu.
+"""Pohlaví mluvčího ze snímků videa — ověření pohlaví určeného z hlasu (se souhlasem u každého mluvčího).
 
-Hlas rozliší dospělého muže a ženu, u dítěte (nad ~250 Hz) a v pásmu 150–165 Hz ne. Tam se
-Codexu ukážou 3 snímky z okamžiků, kdy mluvčí mluví. Je to VOLITELNÉ (zaškrtnutí v UI): jde
+Výška hlasu se plete: u dítěte (nad ~250 Hz) a v pásmu 150–180 Hz pohlaví neurčí vůbec a muž na
+pódiu hlas zvedá (Jensen Huang, GTC: 167 Hz → „žena"). Proto se Codexu u každého mluvčího ukážou
+3 snímky z okamžiků, kdy mluví, a co je na nich vidět, má přednost. Je to VOLITELNÉ (zaškrtnutí v UI): jde
 o jediný případ, kdy z Macu odchází obraz a ne jen text, a na snímcích bývají obličeje.
 Codex smí odpovědět „nejiste" (na snímku nikdo, víc lidí, nejde poznat) — to se nehádá.
 """
@@ -73,7 +74,7 @@ def pohlavi_ze_snimku(z: Zakazka, mluvci: int, f0: float | None, log) -> tuple[s
             return None, "snímky se nepodařilo vyříznout"
         zadani = (f"Mluvčí M{mluvci + 1}. Snímky jsou z časů {', '.join(f'{t:.0f} s' for t in casy)}."
                   + (f" Hlas mluvčího má výšku asi {f0:.0f} Hz." if f0 else ""))
-        log(f"Mluvčí M{mluvci + 1}: pohlaví z hlasu nejde určit — Codexu posílám {len(snimky)} snímky videa.")
+        log(f"Mluvčí M{mluvci + 1}: ověřuji pohlaví — Codexu posílám {len(snimky)} snímky videa.")
         with Codex() as codex:
             r = codex.turn([text(zadani), *[obrazek(s) for s in snimky]], schema=SCHEMA, pokyny=POKYNY)
         if r.status != "completed" or not r.text:

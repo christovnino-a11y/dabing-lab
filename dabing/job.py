@@ -75,7 +75,7 @@ class Zakazka:
     codex: dict = field(default_factory=dict)            # tokeny a kvóta
     rychlost_hlasu: dict = field(default_factory=dict)   # mluvčí → znaků/s změřeno z kotvy
     pohlavi: dict = field(default_factory=dict)          # mluvčí → "m"/"z" použité pro rod v překladu
-    snimky_pohlavi: bool = False                         # smí se u nejistého hlasu poslat Codexu 3 snímky videa
+    snimky_pohlavi: bool = False                         # smí se Codexu poslat 3 snímky videa na mluvčího (ověření pohlaví)
     pohlavi_ze_snimku: dict = field(default_factory=dict)  # mluvčí → "m"/"z"/"" (už zjištěno, neposílat znovu)
     pohlavi_rucne: dict = field(default_factory=dict)    # mluvčí → "m"/"z" zadané v UI (přebije měření)
     rod_prekladu: str = ""          # pro jaké pohlaví mluvčích se překládalo (změna → překlad znovu)

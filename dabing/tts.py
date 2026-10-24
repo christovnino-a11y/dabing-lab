@@ -594,6 +594,23 @@ class Hlas:
             self.worker.zavri()
         self.z.hotovo("hlas")
 
+    def namluv_znovu(self, vety: list[Veta], prubeh: Prubeh, text: str) -> None:
+        """Věty, které zpětná kontrola (qa_zpet) označila jako zkomolené, namluvit znovu: nový
+        seed a stejné doladění délky do slotu jako po prvním namluvení (jinak by se vrátily
+        přesahy). Worker se spustí jen pro tuhle dávku. Zálohu starého take a výběr lepšího
+        řeší volající (`_snimek`, stejně jako hlídač identity)."""
+        indexy = {v.id: i for i, v in enumerate(self.z.vety)}
+        self.worker.start()
+        try:
+            for v in self._po_vetach(vety, prubeh, (0.0, 1.0), text):
+                v.seed += 1
+                self._synth(v, None)
+                self.dolad(v, slot(self.z, indexy[v.id]))
+                v.identita = None  # hlas se změnil, stará podobnost už neplatí
+        finally:
+            self.worker.zavri()
+            self.z.uloz()
+
     def _delky(self, prubeh: Prubeh) -> None:
         indexy = {v.id: i for i, v in enumerate(self.z.vety)}
         dlouhe: list[tuple[Veta, float]] = []

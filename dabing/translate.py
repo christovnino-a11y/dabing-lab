@@ -387,6 +387,48 @@ def _pouzij(vysledek: dict, podle_id: dict[int, Veta], zkraceni: bool,
                 v.zkraceno = True
 
 
+# Rod mluvčího v 1. osobě jednotného čísla (čeština): příčestí u „jsem/bych" a „rád/sám".
+# Síto je záměrně široké — omyl stojí jen nový překlad jedné věty (např. „jsem viděl Paula").
+_ZENSKY_ROD = re.compile(
+    r"\b(?:jsem|bych)\b(?:\s+\w+){0,2}?\s+\w+la\b|\b\w+la\s+(?:jsem|bych)\b"
+    r"|\b(?:jsem|bych|já)\b(?:\s+\w+){0,2}?\s+(?:ráda|sama)\b|\b(?:ráda|sama)\s+(?:\w+\s+)?(?:jsem|bych)\b"
+    r"|\bjsem\s+(?:\w+\s+){0,2}\w+(?:ená|aná|ná|tá|vá)\b", re.I)
+_MUZSKY_ROD = re.compile(
+    r"\b(?:jsem|bych)\b(?:\s+\w+){0,2}?\s+\w+l\b|\b\w+l\s+(?:jsem|bych)\b"
+    r"|\b(?:jsem|bych|já)\b(?:\s+\w+){0,2}?\s+(?:rád|sám)\b|\b(?:rád|sám)\s+(?:\w+\s+)?(?:jsem|bych)\b",
+    re.I)
+
+
+def rod_nesedi(text: str, pohlavi: str) -> bool:
+    """Mluví věta o mluvčím v opačném rodě, než má hlas? (jen čeština, jen m/z)"""
+    if pohlavi == "m":
+        return bool(_ZENSKY_ROD.search(text))
+    if pohlavi == "z":
+        return bool(_MUZSKY_ROD.search(text))
+    return False
+
+
+def over_rod(zakazka: Zakazka, log: Log) -> int:
+    """Smaže překlad vět, které o mluvčím mluví v jiném rodě, než má jeho hlas (překladač pokyn
+    nedodržel, nebo se pohlaví změnilo ručně) → `preloz` je přeloží znovu a hlas je namluví.
+    Vrátí počet smazaných vět."""
+    if zakazka.jazyk != "cs":
+        return 0
+    spatne = [v for v in zakazka.vety
+              if v.cs and not v.upraveno and rod_nesedi(v.cs, v.pohlavi)]
+    if not spatne:
+        return 0
+    ukazka = ", ".join(f"{int(v.start) // 60}:{int(v.start) % 60:02d}" for v in spatne[:6])
+    log(f"Rod nesedí s pohlavím mluvčího u {len(spatne)} vět ({ukazka}{'…' if len(spatne) > 6 else ''})"
+        " — překládám je znovu.")
+    for v in spatne:
+        v.cs, v.vyslov, v.zkraceno = "", "", False
+    zakazka.kroky.pop("preklad", None)
+    zakazka.kroky.pop("hlas", None)
+    zakazka.uloz()
+    return len(spatne)
+
+
 def preloz(zakazka: Zakazka, log: Log, prubeh: Callable[[float, str], None]) -> None:
     """Přeloží věty bez překladu a bez ručně upraveného textu (u nového videa všechny) a přetečené
     dávkově zkrátí. Když už část vět překlad má (po změně pohlaví mluvčího se smazaly jen dotčené,

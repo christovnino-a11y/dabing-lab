@@ -3,9 +3,10 @@
 Překladatel text slyší jen jako text a rod by hádal. Hlas, který dabing naklonuje, ale
 pohlaví má, takže se změří: základní frekvence (F0) po jednotlivých větách z Demucs hlasu
 (16 kHz) a z ní medián za mluvčího. Mužský hlas v řeči má F0 kolem 85–155 Hz, ženský kolem
-165–255 Hz; mezi 150 a 165 Hz je pásmo, kde se údaj nepoužije („?") a překladatel rod určí
-z kontextu. Hlas nad 250 Hz je u dospělých vzácný (dítě, nebo velmi vysoký ženský hlas) a u dětí
-se chlapec od dívky z hlasu nepozná — i to je „?" (pipeline ho pak může ověřit na snímcích).
+165–255 Hz. Muž mluvící na pódiu ale hlas zvedá (NVIDIA GTC, Jensen Huang: medián 167 Hz),
+proto je pásmo 150–180 Hz nejisté („?"): údaj se nepoužije, pipeline ho ověří na snímcích
+(když je to povolené) a jinak překladatel rod určí z kontextu. Hlas nad 250 Hz je u dospělých
+vzácný (dítě, nebo velmi vysoký ženský hlas) a u dětí se chlapec od dívky z hlasu nepozná — i to je „?" (pipeline ho pak může ověřit na snímcích).
 
 Měření po větách odhalí i SMÍCHANÉHO mluvčího: diarizace má strop počtu mluvčích a v dlouhém
 videu s mnoha lidmi slije muže a ženu do jednoho (Gemini at Work: M8 měl 25 vět na 100–130 Hz
@@ -32,8 +33,11 @@ MIN_VETA_S = 1.2
 MIN_RAMCU = 30            # méně hlasových rámců za mluvčího = údaj nelze vzít vážně
 MIN_RAMCU_VETA = 10       # totéž za jednu větu
 HRANICE_MUZ_HZ = 150.0
-HRANICE_ZENA_HZ = 165.0
+HRANICE_ZENA_HZ = 180.0   # 150–180 Hz: energický muž i hlubší žena → nejisté
 HRANICE_VYSOKY_HZ = 250.0     # nad tím nelze určit podle hlasu (dítě)
+# Jednoznačný hlas: tady nad snímky vítězí hlas (v záběru je jiný člověk, mluvčí je mimo obraz)
+JASNY_MUZ_HZ = 140.0
+JASNA_ZENA_HZ = 185.0
 PRAVDEPODOBNOST_HLASU = 0.4
 # Smíchaný mluvčí: věta je „mužská" pod MUZ_VETA_HZ, „ženská" od ZENA_VETA_HZ; pásmo mezi nimi
 # musí být skoro prázdné (náhodný oktávový skok by věty rozházel i tam) a obě skupiny dost velké.

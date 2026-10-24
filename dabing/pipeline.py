@@ -16,7 +16,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from . import media, mix, rozdeleni, segmenty, snimky, translate
+from . import media, mix, qa_text, rozdeleni, segmenty, slouceni, snimky, translate
 from .config import JOBS, LAB, MODEL_DIALOG_CHECKPOINT, PYTHON, offline_env
 from .job import Zakazka, id_ze_souboru
 from .stages import pohlavi as pohlavi_stage
@@ -35,6 +35,10 @@ FAZE = [("stazeni", 0.00, 0.05), ("separace", 0.05, 0.09), ("pozadi", 0.09, 0.24
 # Nad tímhle podílem chybných znaků ve zpětném přepisu je věta nejspíš zamumlaná
 # nebo useknutá (cizí jména psaná foneticky zvednou CER jen mírně).
 PRAH_CER = 0.30
+# Věta s CER nad prahem nebo se zkomoleným slovem (qa_text.zkomolena_slova) se namluví znovu s novým
+# seedem; zůstane nejlepší take podle skóre = CER + VAHA_ZKOMOLENEHO × počet zkomolených slov.
+POKUSY_QA = 2
+VAHA_ZKOMOLENEHO = 0.1
 
 
 class Pipeline:
@@ -45,11 +49,13 @@ class Pipeline:
         self._proces: subprocess.Popen | None = None
 
     # ----------------------------------------------------------- průběh
-    def _faze(self, jmeno: str) -> Prubeh:
+    def _faze(self, jmeno: str, usek: tuple[float, float] = (0.0, 1.0)) -> Prubeh:
+        """Hlášení průběhu kroku; `usek` zúží krok na část jeho podílu (kontrola má víc podkroků)."""
         _, od, do = next(f for f in FAZE if f[0] == jmeno)
 
         def hlaseni(p: float, zprava: str) -> None:
-            self._prubeh(od + (do - od) * max(0.0, min(1.0, p)), zprava)
+            p = usek[0] + (usek[1] - usek[0]) * max(0.0, min(1.0, p))
+            self._prubeh(od + (do - od) * p, zprava)
         return hlaseni
 
     def log(self, zprava: str) -> None:
@@ -66,9 +72,9 @@ class Pipeline:
 
     # ----------------------------------------------------------- kroky
     def _krok(self, modul: str, zakazka: Zakazka, faze: str, argumenty: tuple[str, ...] = (),
-              env_navic: dict[str, str] | None = None) -> None:
+              env_navic: dict[str, str] | None = None, usek: tuple[float, float] = (0.0, 1.0)) -> None:
         self._kontrola()
-        hlaseni = self._faze(faze)
+        hlaseni = self._faze(faze, usek)
         self._proces = subprocess.Popen(
             [str(PYTHON), "-m", f"dabing.stages.{modul}", str(zakazka.slozka), *argumenty],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
@@ -227,12 +233,30 @@ class Pipeline:
                 for m, ids in dva.items():
                     presunuto += self._presun(z, zmereno, m, set(ids), "podle otisku hlasu")
                 cesta.write_text(json.dumps(zmereno, ensure_ascii=False, indent=1), encoding="utf-8")
+        if zmereno and z.cesta("vocals16.wav").exists() and len({v.mluvci for v in z.vety}) > 1:
+            # opak: jednoho člověka diarizace rozdělila do dvou mluvčích (řečník, když křičí)
+            self._faze("vety")(0.95, "Ověřuji otiskem hlasu, jestli dva mluvčí nejsou týž člověk…")
+            try:
+                slouc = slouceni.sloucit(z, zmereno, self.log)
+            except Zruseno:
+                raise
+            except Exception as chyba:  # noqa: BLE001 — sloučení nesmí zastavit dabing
+                self.log(f"Sloučení mluvčích otiskem hlasu selhalo: {type(chyba).__name__}: {chyba}")
+                slouc = {}
+            for m, (cil, ids) in slouc.items():
+                presunuto += self._pripoj(z, zmereno, m, cil, set(ids))
+            cesta.write_text(json.dumps(zmereno, ensure_ascii=False, indent=1), encoding="utf-8")
         if presunuto:
             cesta.write_text(json.dumps(zmereno, ensure_ascii=False, indent=1), encoding="utf-8")
             mluvci = {str(v.mluvci) for v in z.vety}
+        for x in zmereno.values():  # uložené měření ohodnotit podle současných hranic
+            if x.get("f0") is not None:
+                x["pohlavi"] = pohlavi_stage.urci(x["f0"])
         z.pohlavi = {m: x["pohlavi"] for m, x in zmereno.items() if x.get("pohlavi") in ("m", "z")}
-        if z.snimky_pohlavi:  # hlas nerozhodl (hranice, dítě) → pojistka ze snímků, jen se souhlasem
-            for m in sorted(mluvci - set(z.pohlavi) - set(z.pohlavi_rucne), key=int):
+        if z.snimky_pohlavi:
+            # se souhlasem ověřit snímky KAŽDÉHO mluvčího: výška hlasu se plete i mimo hranici
+            # (muž na pódiu hlas zvedá — Jensen Huang 167 Hz vyšel jako žena); co je vidět, má přednost
+            for m in sorted(mluvci - set(z.pohlavi_rucne), key=int):
                 if m not in z.pohlavi_ze_snimku:
                     try:
                         rod, duvod = snimky.pohlavi_ze_snimku(z, int(m), (zmereno.get(m) or {}).get("f0"), self.log)
@@ -242,8 +266,20 @@ class Pipeline:
                         rod, duvod = None, f"{type(chyba).__name__}: {chyba}"
                     z.pohlavi_ze_snimku[m] = rod or ""
                     self.log(f"Mluvčí M{int(m) + 1} ze snímků: {({'m': 'muž', 'z': 'žena'}).get(rod, 'nepoznáno')} ({duvod})")
-                if z.pohlavi_ze_snimku[m] in ("m", "z"):
-                    z.pohlavi[m] = z.pohlavi_ze_snimku[m]
+                rod = z.pohlavi_ze_snimku[m]
+                f0 = (zmereno.get(m) or {}).get("f0")
+                jasny = f0 is not None and (f0 <= pohlavi_stage.JASNY_MUZ_HZ or f0 >= pohlavi_stage.JASNA_ZENA_HZ)
+                if rod in ("m", "z") and m in z.pohlavi and z.pohlavi[m] != rod and jasny:
+                    # hlas jednoznačný, v záběru někdo jiný: mluvčí je mimo obraz (žena z hlediště
+                    # křičí na řečníka, vypravěč přes záběr) → platí hlas
+                    self.log(f"Mluvčí M{int(m) + 1}: hlas jasně {({'m': 'muž', 'z': 'žena'})[z.pohlavi[m]]} "
+                             f"({f0:.0f} Hz), na snímcích {({'m': 'muž', 'z': 'žena'})[rod]} — mluvčí je asi "
+                             "mimo záběr, platí hlas.")
+                elif rod in ("m", "z"):
+                    if z.pohlavi.get(m, rod) != rod:
+                        self.log(f"Mluvčí M{int(m) + 1}: podle hlasu {({'m': 'muž', 'z': 'žena'})[z.pohlavi[m]]}, "
+                                 f"podle snímků {({'m': 'muž', 'z': 'žena'})[rod]} — platí snímky.")
+                    z.pohlavi[m] = rod
         z.pohlavi.update(z.pohlavi_rucne)
         for v in z.vety:
             v.pohlavi = z.pohlavi.get(str(v.mluvci), "")
@@ -261,7 +297,9 @@ class Pipeline:
             # překlad vznikl bez znalosti pohlaví (nebo s jiným, nebo u jiného mluvčího) → rod
             # sloves by neseděl s hlasem; mažou se jen dotčené věty, ostatní zůstanou
             dotcene = [v for v in z.vety if v.cs and not v.upraveno and stare[v.id] != v.pohlavi]
-            if dotcene:
+            if dotcene and z.jazyk == "cs":  # česky jen věty, kde rod opravdu nesedí (zbytek je bez rodu)
+                translate.over_rod(z, self.log)
+            elif dotcene:
                 self.log(f"Pohlaví mluvčích se od překladu změnilo u {len(dotcene)} vět — překládám je "
                          "znovu (věty s nezměněným textem se nenamlouvají znovu).")
                 for v in dotcene:
@@ -311,9 +349,34 @@ class Pipeline:
             zaznam.update(vety={str(k): f for k, f in skupina.items()}, f0=stred,
                           pohlavi=pohlavi_stage.urci(stred), ramcu=len(hodnoty), hlas_overen=True)
             z.pohlavi_ze_snimku.pop(klic, None)  # snímky se týkaly smíchané skupiny → znovu
+        zmereno[str(novy)]["oddeleno_od"] = m  # sloučení je zpátky nespojí
         self.log(f"Mluvčí M{int(m) + 1} byl smíchaný (diarizace slila dva lidi, {proc}) — "
                  f"{len(k_presunu)} vět přesunuto k novému mluvčímu M{novy + 1}.")
         return len(k_presunu)
+
+    def _pripoj(self, z: Zakazka, zmereno: dict, m: str, cil: str, ids: set[int]) -> int:
+        """Věty `ids` mluvčího `m` k mluvčímu `cil` (týž člověk podle otisku hlasu). Dostanou
+        jeho referenci, klon i pohlaví; ze zbytku `m` (jiný hlas) se pohlaví určí znovu."""
+        presunute = [v for v in z.vety if str(v.mluvci) == m and v.id in ids]
+        for v in presunute:
+            v.mluvci = int(cil)
+            v.reference, v.druh_reference, v.tts_otisk = "", "", ""  # jiný hlas, jiná reference
+        f0 = {int(k): f for k, f in (zmereno.get(m, {}).get("vety") or {}).items()}
+        zbyva = any(str(v.mluvci) == m for v in z.vety)
+        f0_cile = {int(k): f for k, f in (zmereno.get(cil, {}).get("vety") or {}).items()}
+        for klic, skupina in ((cil, {**f0_cile, **{k: f for k, f in f0.items() if k in ids}}),
+                              (m, {k: f for k, f in f0.items() if k not in ids})):
+            if klic == m and not zbyva:
+                zmereno.pop(m, None)
+                z.pohlavi_ze_snimku.pop(m, None)
+                continue
+            hodnoty = sorted(skupina.values())
+            stred = round(hodnoty[len(hodnoty) // 2], 1) if hodnoty else None
+            zmereno.setdefault(klic, {}).update(vety={str(k): f for k, f in skupina.items()}, f0=stred,
+                                                pohlavi=pohlavi_stage.urci(stred), ramcu=len(hodnoty))
+            if klic == m:
+                z.pohlavi_ze_snimku.pop(m, None)  # snímky se týkaly i vět, které odešly → znovu
+        return len(presunute)
 
     def _efekty(self, z: Zakazka, faze: str = "pozadi") -> None:
         """BandIt najde v hlasové stopě Demucsu jásot, potlesk a smích; mix je vrátí do pozadí.
@@ -353,16 +416,23 @@ class Pipeline:
         kdo = "Codex" if z.prekladac == "codex" else "lokální model v LM Studiu"
         self.log(f"Překládám ({kdo})…")
         translate.preloz(z, self.log, self._faze("preklad"))
+        if translate.over_rod(z, self.log):  # překladač rod nedodržel → jeden pokus navíc
+            translate.preloz(z, self.log, self._faze("preklad"))
+            if zbyva := sum(translate.rod_nesedi(v.cs, v.pohlavi) for v in z.vety if not v.upraveno):
+                self.log(f"Rod nejspíš pořád nesedí u {zbyva} vět — zkontroluj je v tabulce.")
         if z.prekladac == "codex" and z.codex:
             self.log(f"Codex: {z.codex.get('turny')} turnů, kvóta "
                      f"{z.codex.get('kvota_pred_%')} % → {z.codex.get('kvota_po_%')} %")
 
     def nadabuj(self, z: Zakazka) -> dict[str, Path]:
         self._kontrola()
-        Hlas(z, self.log, self.zrusit).nadabuj(self._faze("hlas"))
+        hlas = Hlas(z, self.log, self.zrusit)
+        hlas.nadabuj(self._faze("hlas"))
         self._kontrola()
-        self._krok("qa_zpet", z, "kontrola")
-        self._oznac_nesrozumitelne(z)
+        self._krok("qa_zpet", z, "kontrola", usek=(0.0, 0.5))
+        znovu, opraveno = self._oprav_zkomolene(z, hlas)
+        self._oznac_nesrozumitelne(z, znovu, opraveno)
+        self._faze("kontrola")(1.0, "Kontrola srozumitelnosti hotová")
         self._efekty(z, "detekce")  # u starších zakázek (Přegenerovat) se dopočítají, jinak přeskočí
         try:
             self._krok("vad", z, "detekce")
@@ -376,21 +446,93 @@ class Pipeline:
         self._faze("export")(1.0, "Hotovo")
         return soubory
 
-    def _oznac_nesrozumitelne(self, z: Zakazka) -> None:
+    @staticmethod
+    def _spatna_veta_qa(zaznam: dict) -> bool:
+        return zaznam["cer"] > PRAH_CER or bool(zaznam.get("zkomolena"))
+
+    @staticmethod
+    def _skore_qa(zaznam: dict) -> float:
+        return zaznam["cer"] + VAHA_ZKOMOLENEHO * len(zaznam.get("zkomolena") or [])
+
+    def _oprav_zkomolene(self, z: Zakazka, hlas: Hlas) -> tuple[int, int]:
+        """Věty se zamumlaným nebo zkomoleným slovem (viz qa_zpet) se až POKUSY_QA× namluví znovu
+        s novým seedem a doladí do slotu, qa_zpet se spustí jen nad nimi a zůstane lepší take
+        (stejný vzor jako hlídač identity v `Hlas._identita`: záloha `_snimek`, návrat k lepšímu).
+        Nové namluvení je volitelné vylepšení — jeho selhání dabing nezastaví. Vrací (kolik vět
+        se namluvilo znovu, u kolika to pomohlo)."""
         cesta = z.cesta("qa_zpet.json")
-        if not cesta.exists():
+        data = qa_text.nacti_qa(cesta, z.vety, zapsat=True)
+        vety = {v.id: v for v in z.vety if str(v.id) in data and v.tts and z.cesta(v.tts).exists()}
+        spatne = [i for i in vety if self._spatna_veta_qa(data[str(i)])]
+        znovu = len(spatne)
+        if not znovu:
+            return 0, 0
+        zalohy: dict[int, Path] = {}    # id → zvuk nejlepšího take
+        snimky: dict[int, dict] = {}    # id → pole věty nejlepšího take
+        nejlepsi: dict[int, dict] = {}  # id → záznam qa_zpet nejlepšího take
+        try:
+            for kolo in range(POKUSY_QA):
+                if not spatne:
+                    break
+                self._kontrola()
+                for i in spatne:
+                    if i not in snimky:
+                        zalohy[i] = z.cesta(f"tts/veta_{i:04d}.qa.wav")
+                        snimky[i] = hlas._snimek(vety[i], zalohy[i])
+                        nejlepsi[i] = dict(data[str(i)])
+                self.log(f"Kontrola: {len(spatne)} vět je špatně srozumitelných nebo má zkomolené slovo — "
+                         f"namlouvám je znovu (pokus {kolo + 1} z {POKUSY_QA}).")
+                od = 0.5 + 0.25 * kolo
+                hlas.namluv_znovu([vety[i] for i in spatne], self._faze("kontrola", (od, od + 0.15)),
+                                  "Kontrola: namlouvám znovu")
+                self._krok("qa_zpet", z, "kontrola", ("--jen", ",".join(str(i) for i in spatne)),
+                           usek=(od + 0.15, od + 0.25))
+                data = qa_text.nacti_qa(cesta, z.vety)
+                for i in spatne:
+                    if self._skore_qa(data[str(i)]) < self._skore_qa(nejlepsi[i]):
+                        snimky[i] = hlas._snimek(vety[i], zalohy[i])
+                        nejlepsi[i] = dict(data[str(i)])
+                spatne = [i for i in spatne if self._spatna_veta_qa(nejlepsi[i])]
+        except Zruseno:
+            raise
+        except RuntimeError as chyba:  # worker nebo přepis selhal — zůstane, co je (lepší take se vrátí níže)
+            self.log(f"Kontrola: opakované namluvení selhalo ({chyba}) — nechávám lepší verze.")
+        finally:
+            for i, snimek in snimky.items():
+                v = vety[i]
+                if (v.seed, v.tts_otisk) != (snimek["seed"], snimek["tts_otisk"]):
+                    shutil.copyfile(zalohy[i], z.cesta(v.tts))
+                    for pole, hodnota in snimek.items():
+                        setattr(v, pole, hodnota)
+                zalohy[i].unlink(missing_ok=True)
+            if nejlepsi:  # qa_zpet.json musí popisovat take, který zůstal na disku
+                data = qa_text.nacti_qa(cesta, z.vety)
+                data.update({str(i): zaznam for i, zaznam in nejlepsi.items()})
+                cesta.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+            z.uloz()  # take na disku a job.json vždy spolu
+        return znovu, sum(not self._spatna_veta_qa(zaznam) for zaznam in nejlepsi.values())
+
+    def _oznac_nesrozumitelne(self, z: Zakazka, znovu: int = 0, opraveno: int = 0) -> None:
+        data = qa_text.nacti_qa(z.cesta("qa_zpet.json"), z.vety, zapsat=True)
+        if not data:
             return
-        data = json.loads(cesta.read_text(encoding="utf-8"))
-        spatne = 0
+        spatne = zkomolene = 0
         for v in z.vety:
-            v.qa = [q for q in v.qa if q != "nesrozumitelne"]
+            v.qa = [q for q in v.qa if q not in ("nesrozumitelne", "zkomolene")]
             zaznam = data.get(str(v.id))
             if zaznam and zaznam["cer"] > PRAH_CER:
                 v.qa.append("nesrozumitelne")
                 spatne += 1
+            elif zaznam and zaznam.get("zkomolena"):
+                v.qa.append("zkomolene")
+                zkomolene += 1
         z.uloz()
-        if spatne:
-            self.log(f"Kontrola: {spatne} vět je špatně srozumitelných — zkontroluj je v tabulce.")
+        if znovu:
+            self.log(f"Kontrola: {znovu} vět namluveno znovu, {opraveno} opraveno, {spatne + zkomolene} zůstávají"
+                     + (" — v tabulce „zkomolené“ a „špatně srozumitelné“." if spatne + zkomolene else "."))
+        elif spatne or zkomolene:
+            self.log(f"Kontrola: {spatne} vět je špatně srozumitelných, {zkomolene} má zkomolené slovo "
+                     "— zkontroluj je v tabulce.")
 
     def cely(self, zdroj: str, jazyk: str, prekladac: str, pocet_mluvcich: int | None,
              jazyk_zdroje: str = "auto", pohlavi_rucne: dict | None = None,

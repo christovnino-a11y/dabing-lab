@@ -21,6 +21,7 @@ from dabing import ucet
 from dabing.config import JAZYKY, JAZYKY_ZDROJE, PORT
 from dabing.job import Zakazka
 from dabing.pipeline import Pipeline
+from dabing.qa_text import nacti_qa
 from dabing.tts import Zruseno
 
 REZIMY = {"S Codexem (nejlepší překlad)": "codex", "Plně lokální (nic neodchází z Macu)": "offline"}
@@ -39,6 +40,7 @@ QA_POPISY = {"zrychleno": "mírně zrychleno", "zpomaleno": "mírně zpomaleno",
              "identita": "hlas opraven novým pokusem",
              "hlas_ujel": "HLAS NESEDÍ — poslechni",
              "nesrozumitelne": "ŠPATNĚ SROZUMITELNÉ — poslechni",
+             "zkomolene": "ZKOMOLENÉ SLOVO — poslechni",
              "bez_dabingu": "bez překladu — zní originál"}
 SLOUPCE = ["#", "Čas", "Mluvčí", "Originál", "Překlad (lze upravit)", "Délka hlasu", "Kontrola"]
 
@@ -52,8 +54,13 @@ def _cas(s: float) -> str:
 
 def _tabulka(z: Zakazka) -> list[list]:
     radky = []
+    # zkomolená slova („generaci→genesraci") jsou jen v qa_zpet.json; čte se, jen když nějaká věta má značku
+    zkomolena = nacti_qa(z.cesta("qa_zpet.json"), z.vety) if any("zkomolene" in v.qa for v in z.vety) else {}
     for v in z.vety:
         kontrola = [QA_POPISY.get(q, q) for q in v.qa]
+        slova = (zkomolena.get(str(v.id)) or {}).get("zkomolena")
+        if slova and "zkomolene" in v.qa:
+            kontrola[v.qa.index("zkomolene")] = f"ZKOMOLENÉ SLOVO ({', '.join(slova)}) — poslechni"
         if v.zkraceno:
             kontrola.insert(0, "zkráceno")
         delka = f"{v.vysledna_s:.1f} / {v.delka:.1f} s" if v.vysledna_s else ""
@@ -68,9 +75,10 @@ def _souhrn(z: Zakazka) -> str:
     presah = sum("presah" in v.qa for v in vety)
     identita = sum("identita" in v.qa for v in vety)
     nesrozumitelne = sum("nesrozumitelne" in v.qa for v in vety)
+    zkomolene = sum("zkomolene" in v.qa for v in vety)
     radky = [f"**{z.nazev}** — {len(vety)} vět, mluvčích {len({v.mluvci for v in vety})}.",
              f"Mírně zrychleno {zrychleno}, přesah {presah}, hlas opraven {identita}, "
-             f"špatně srozumitelné {nesrozumitelne}."]
+             f"špatně srozumitelné {nesrozumitelne}, zkomolené slovo {zkomolene}."]
     if presah:
         radky.append("Věty s **přesahem** v tabulce zkrať a dej *Přegenerovat změněné*.")
     mixinfo = z.codex.get("mix") or {}
@@ -287,10 +295,10 @@ with gr.Blocks(title="Dabing") as demo:
         pohlavi = gr.Textbox(label="Pohlaví mluvčích (volitelně)", placeholder="např. 1 ž, 2 m", scale=1,
                              info="Pohlaví se pozná z hlasu; sem napiš jen když to nesedí. "
                                   "Číslo mluvčího jako v tabulce (M1 = 1). Rozhoduje o rodu sloves v překladu.")
-    snimky = gr.Checkbox(label="Když to z hlasu nepoznám (dítě, hranice), nechat Codex podívat se na 3 snímky videa",
+    snimky = gr.Checkbox(label="Ověřit pohlaví každého mluvčího na 3 snímcích videa (Codex)",
                          value=False,
                          info="Jediný případ, kdy z Macu odejde obraz (ne text); na snímcích bývají obličeje. "
-                              "Bez zaškrtnutí se nic neposílá a rod se určí z kontextu.")
+                              "Bez zaškrtnutí se nic neposílá a rod se určí z výšky hlasu, u nejistých z kontextu.")
     with gr.Row():
         spust = gr.Button("Spustit", variant="primary", scale=3)
         zrus = gr.Button("Zrušit", variant="stop", scale=1)
