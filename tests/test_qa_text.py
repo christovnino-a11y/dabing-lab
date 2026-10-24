@@ -84,21 +84,26 @@ def test_oznac_a_nacti_qa(tmp_path=None):
     assert oznac_zkomolena(nacteno, {"1": "Naši nejnovější generaci."}) is True
 
 
+def test_znama_zkomolena_z_gtc():
+    """Skutečné zkomoleniny z GTC 2026 (PvFjbPYEOZI, před opravou) — kontrola je musí chytit."""
+    texty = {"171": "Od výpočtů na GPU přes Veru Rubin, naši úplně nejnovější generaci,",
+             "1081": "Tento agent běží na těchto počítačích, ale zároveň přecházíme k další generaci,"}
+    data = {"171": {"cer": 0.101, "prepis": "Od výpočtu na GP-u přes veru Rubin naši úplně nejnovější genesraci."},
+            "1081": {"cer": 0.024, "prepis": "Tento agent běží na těchto počítačích, ale zároveň přezíme k další generaci,"}}
+    oznac_zkomolena(data, texty)
+    assert data["171"]["zkomolena"] == ["generaci→genesraci"]
+    assert data["1081"]["zkomolena"]
+
+
 def test_skutecna_zakazka():
-    """Kalibrace na zakázce PvFjbPYEOZI (1155 vět): musí chytit věty 171 a 1081, ne ~10 % vět."""
+    """Na celé zakázce PvFjbPYEOZI (1155 vět) nesmí kontrola označit víc než ~8 % vět."""
     if not (ZAKAZKA / "qa_zpet.json").exists():
         return
     job = json.loads((ZAKAZKA / "job.json").read_text(encoding="utf-8"))
     texty = {str(v["id"]): v["vyslov"] or v["cs"] for v in job["vety"]}
-    zaloha = next(ZAKAZKA.glob("zaloha-*/job.json"), None)  # část vět má v běžící zakázce prázdný překlad
-    if zaloha:
-        for v in json.loads(zaloha.read_text(encoding="utf-8"))["vety"]:
-            texty[str(v["id"])] = texty.get(str(v["id"])) or v["vyslov"] or v["cs"]
     data = json.loads((ZAKAZKA / "qa_zpet.json").read_text(encoding="utf-8"))
     oznac_zkomolena(data, texty)
     oznacene = {i for i, z in data.items() if z["zkomolena"]}
-    assert "171" in oznacene and "1081" in oznacene
-    assert data["171"]["zkomolena"] == ["generaci→genesraci"]
     assert len(oznacene) < 0.08 * len(data)
 
 
