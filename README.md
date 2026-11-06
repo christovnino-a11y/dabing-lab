@@ -131,7 +131,7 @@ překladu v tabulce se přegenerují jen změněné věty.
 
 ## Licence
 
-- Kód labu: viz soubor [LICENSE](LICENSE).
+- Kód labu: [PolyForm Noncommercial 1.0.0](LICENSE). Zdarma k používání a úpravám, ne komerčně.
 - Modely mají vlastní licence (přehled a velikosti v [docs/INSTALACE.md](docs/INSTALACE.md),
   kapitola 3; před sdílením výsledků přečti kartu každého modelu).
 - Váhy OmniVoice jsou **CC-BY-NC**, váhy BandIt Plus jsou odvozené od modelu CC-BY-NC-4.0: dabing je
