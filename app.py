@@ -26,7 +26,7 @@ from dabing.tts import Zruseno
 
 PREKLADACE = {"Codex (předplatné ChatGPT, nejlepší překlad)": "codex",
               "Ollama (lokálně, nic neodchází z Macu)": "ollama",
-              "LM Studio (lokálně, nic neodchází z Macu)": "lmstudio"}
+              "Bionic / LM Studio (lokálně, nic neodchází z Macu)": "lmstudio"}
 NAZEV_PREKLADACE = {v: k for k, v in PREKLADACE.items()}
 MLUVCI = ["Automaticky", "1", "2", "3", "4", "5", "6"]
 

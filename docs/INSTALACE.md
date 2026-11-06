@@ -313,8 +313,11 @@ U každé aplikace sama zjistí stav, ukáže další krok, nabídne rozbalovac�
 **„Zapnout server"**. Volba se pamatuje v `nastaveni.json`. Lokální režim (Ollama, LM Studio)
 neposílá nic z Macu a kontrola podle snímků je v něm vypnutá.
 
-U Ollamy a LM Studia lab mluví s jejich API na adrese ve volbě **„Adresa API"** (výchozí
-`http://127.0.0.1:11434` / `http://127.0.0.1:1234`, uložená zvlášť pro každou službu v `nastaveni.json`,
+Bionic je nová aplikace LM Studia: v labu je to stejná volba **Bionic / LM Studio**, server zapneš
+v Bionicu v sekci Local Model API. U Ollamy a Bionicu / LM Studia lab mluví s jejich API na adrese ve
+volbě **„Adresa API"** (výchozí `http://127.0.0.1:11434` = `http://localhost:11434` u Ollamy a
+`http://127.0.0.1:1234` u Bionicu / LM Studia; adresu můžeš vložit i s `/v1`, klíč ani účet na
+ollama.com není potřeba; uložená zvlášť pro každou službu v `nastaveni.json`,
 prázdné pole = výchozí; proměnná prostředí `DABING_OLLAMA_URL` / `DABING_LMSTUDIO_URL` má přednost).
 Změna adresy obnoví stav a seznam modelů a platí i pro „Přegenerovat". „Zapnout server" se ukáže jen
 u adresy na tomhle Macu; u adresy mimo něj lab varuje, že text videa odchází na ten počítač.
@@ -505,7 +508,7 @@ v `logy/omnivoice.log`. **Neopakuj slepě**: nejdřív si přečti, co skutečn�
 | Instalace nebo stahování se přerušilo (zavřené okno, vypadlý internet, uspání) | Přerušený krok | Zopakuj stejný příkaz: `uv`, `brew` i stahování modelů naváží a hotové přeskočí. Nic nemaž a nepřeinstalovávej. |
 | `No space left on device` | Plný disk | Uvolni místo (`df -h .`), zopakuj krok. Úklid: kapitola 9. Nic nemaž naslepo. |
 | `git pull` hlásí, že by přepsal `uv.lock` (untracked working tree files) | Lokálně vzniklý `uv.lock`, který vlastník mezitím přidal do repozitáře | Smaž lokální soubory (`rm -f uv.lock worker/omnivoice/uv.lock`), spusť `git pull` znovu a pak příkazy z kroku 5. |
-| `LM Studio neběží …` / prázdná odpověď | Server neběží, nebo model vrací prázdnou odpověď (zapnuté přemýšlení) | Kapitola 4: „Zapnout server", případně vypnout thinking. |
+| `Bionic / LM Studio neběží …` / prázdná odpověď | Server neběží, nebo model vrací prázdnou odpověď (zapnuté přemýšlení) | Kapitola 4: „Zapnout server", případně vypnout thinking. |
 | `Věta N: Worker skončil (nejspíš chyba MPS) … restartuji worker` | Chyba paměti GPU shodila hlasový proces | Ojedinělé je v pořádku. Při opakování (`worker opakovaně spadl`) zavři těžké aplikace (hlavně LM Studio s modelem), restartuj lab a spusť znovu. Hotové kroky se nepočítají znovu. |
 | `Worker neodpověděl do 60 s` | Úplně první start nového prostředí (příčina neověřena) | Zkus znovu. |
 | `Worker neodpověděl do 300 s` (věta) nebo `do 600 s` (načtení modelu) | Málo paměti nebo uspání Macu | Zavři ostatní aplikace, Mac nech v zásuvce s otevřeným víkem. |

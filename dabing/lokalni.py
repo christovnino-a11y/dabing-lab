@@ -1,4 +1,4 @@
-"""Lokální překladače: Ollama a LM Studio na tomto Macu (nic neodchází ven).
+"""Lokální překladače: Ollama a Bionic / LM Studio přes jejich API (nic neodchází ven).
 
 Tenká vrstva nad HTTP API obou serverů: zjištění stavu (je nainstalováno, běží, jaké má
 modely), spuštění serveru a jeden strukturovaný dotaz (JSON podle schématu).
@@ -20,11 +20,20 @@ import requests
 
 VYCHOZI = {"ollama": "http://127.0.0.1:11434", "lmstudio": "http://127.0.0.1:1234"}
 SLUZBY = {k: os.environ.get(f"DABING_{k.upper()}_URL", v) for k, v in VYCHOZI.items()}
-NAZVY = {"ollama": "Ollama", "lmstudio": "LM Studio"}
+NAZVY = {"ollama": "Ollama", "lmstudio": "Bionic / LM Studio"}  # Bionic je nová aplikace LM Studia
 CASOVY_LIMIT_STAVU = 2
 CASOVY_LIMIT_DOTAZU = 900
 NUM_CTX = 16384
 MAX_TOKENU = 12000
+
+
+def ocisti_adresu(adresa: str) -> str:
+    """Adresa bez koncového lomítka a /v1: Bionic a LM Studio ukazují http://localhost:1234/v1,
+    ale cesty API už /v1 obsahují (jinak by vzniklo /v1/v1). Bez schématu se doplní http://."""
+    adresa = (adresa or "").strip().rstrip("/")
+    if adresa and "://" not in adresa:
+        adresa = "http://" + adresa
+    return re.sub(r"/v1$", "", adresa, flags=re.I)
 
 
 def _url(sluzba: str) -> str:
@@ -32,7 +41,7 @@ def _url(sluzba: str) -> str:
     Čte se při každém volání, aby šlo adresu změnit za běhu (a v testech); do job.json se nepíše."""
     from . import nastaveni  # nastaveni importuje lokalni
     env = {"ollama": "DABING_OLLAMA_URL", "lmstudio": "DABING_LMSTUDIO_URL"}[sluzba]
-    return (os.environ.get(env) or nastaveni.ulozena_adresa(sluzba) or VYCHOZI[sluzba]).rstrip("/")
+    return ocisti_adresu(os.environ.get(env) or nastaveni.ulozena_adresa(sluzba) or VYCHOZI[sluzba])
 
 
 def je_na_tomto_macu(sluzba: str) -> bool:
@@ -51,7 +60,8 @@ def _nainstalovano(sluzba: str) -> bool:
     if sluzba == "ollama":
         return bool(shutil.which("ollama") or Path("/opt/homebrew/bin/ollama").exists()
                     or Path("/Applications/Ollama.app").exists())
-    return bool((Path.home() / ".lmstudio/bin/lms").exists() or Path("/Applications/LM Studio.app").exists()
+    return bool((Path.home() / ".lmstudio/bin/lms").exists() or Path("/Applications/Bionic.app").exists()
+                or Path("/Applications/LM Studio.app").exists()
                 or shutil.which("lms"))
 
 
@@ -119,7 +129,7 @@ def zapni(sluzba: str) -> str:
         lms = Path.home() / ".lmstudio/bin/lms"
         program = str(lms) if lms.exists() else shutil.which("lms")
         if not program:
-            return "Nenašel jsem příkaz `lms` — spusť server v aplikaci LM Studio (Developer → Start Server)."
+            return "Nenašel jsem příkaz `lms` — zapni server v aplikaci (Bionic: Local Model API, LM Studio: Developer)."
         prikaz = [program, "server", "start"]
     try:
         subprocess.Popen(prikaz, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
@@ -172,7 +182,7 @@ def _necitelna() -> RuntimeError:
 def _spojeni(sluzba: str, chyba: Exception) -> RuntimeError:
     nazev = NAZVY[sluzba]
     if sluzba == "lmstudio":
-        return RuntimeError("LM Studio neběží. Spusť v něm server (Developer → Start Server) "
+        return RuntimeError("Bionic / LM Studio neběží. Zapni server (Bionic: Local Model API, LM Studio: Developer) "
                             f"a načti model. ({type(chyba).__name__})")
     return RuntimeError(f"{nazev} neběží — klikni v labu na „Zapnout server“ nebo spusť `ollama serve`. "
                         f"({type(chyba).__name__})")
@@ -204,9 +214,9 @@ def _lmstudio(model: str, system: str, zadani: str, schema: dict) -> dict:
     try:
         data = odpoved.json()
     except ValueError:
-        raise RuntimeError(f"LM Studio vrátilo chybu {odpoved.status_code}: {odpoved.text[:300]}") from None
+        raise RuntimeError(f"Bionic / LM Studio vrátilo chybu {odpoved.status_code}: {odpoved.text[:300]}") from None
     if "error" in data and not data.get("choices"):
-        raise RuntimeError(f"LM Studio: {data['error'] if isinstance(data['error'], str) else data['error'].get('message', data['error'])}")
+        raise RuntimeError(f"Bionic / LM Studio: {data['error'] if isinstance(data['error'], str) else data['error'].get('message', data['error'])}")
     obsah = _text_zpravy((data.get("choices") or [{}])[0].get("message"))
     if not obsah.strip():
         raise _prazdna("lmstudio")

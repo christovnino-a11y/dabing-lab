@@ -447,7 +447,7 @@ v `logy/omnivoice.log`.
 | `Stav účtu se nepodařilo zjistit …` | Nenaběhl přibalený Codex: stupeň 1, krok 5 znovu. |
 | `Codex překlad selhal (failed)` | Vyčerpaná kvóta, nebo model účet nemá: počkat na reset, lokální překladač, nebo ověřit modely (kapitola E). |
 | `Překlad chybí u vět […]` | Spustit znovu, hotové kroky se přeskočí. |
-| `LM Studio neběží` / prázdná odpověď | „Zapnout server" v aplikaci, načíst jen jeden jazykový model, vypnout v něm přemýšlení. |
+| `Bionic / LM Studio neběží` / prázdná odpověď | „Zapnout server" v aplikaci, načíst jen jeden jazykový model, vypnout v něm přemýšlení. |
 | `Worker skončil (nejspíš chyba MPS) … restartuji` | Ojedinělé je v pořádku. Opakované: zavřít těžké aplikace (hlavně LM Studio), restart labu, spustit znovu. |
 | `Worker neodpověděl do 60 s` | První start nového prostředí (příčina neověřena), zkusit znovu. |
 | `Worker neodpověděl do 300 / 600 s` | Málo RAM nebo uspání Macu: zavřít aplikace, Mac v zásuvce. |

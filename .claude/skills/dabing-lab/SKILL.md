@@ -268,7 +268,7 @@ Kde hledat: výstup terminálu s `./spustit.sh`, rozbalovátko „Log" v UI, `lo
 | „Překlad Codexem potřebuje přihlášení" | Přihlášení v UI (část 5), nebo lokální překladač. |
 | „Codex je přihlášený API klíčem" | V UI se odhlásit a přihlásit účtem ChatGPT. |
 | `Codex překlad selhal (failed)` | Vyčerpaná kvóta, nebo model účet nemá: počkat, lokální překladač, nebo ověřit modely (část 5). |
-| `LM Studio neběží` / prázdná odpověď | „Zapnout server" v aplikaci, načíst jen jeden jazykový model, vypnout v něm přemýšlení. |
+| `Bionic / LM Studio neběží` / prázdná odpověď | „Zapnout server" v aplikaci, načíst jen jeden jazykový model, vypnout v něm přemýšlení. |
 | `Worker skončil (nejspíš chyba MPS)` | Ojedinělé je v pořádku (lab restartuje). Opakované: zavřít těžké aplikace, restart labu. |
 | `Worker neodpověděl do 60 / 300 / 600 s` | První start nového venv (60 s), nebo málo RAM či uspání: zavřít aplikace, Mac v zásuvce. |
 | `BandIt selhal` | Lab zkusí CPU sám; ručně `DABING_DIALOG_CPU=1 ./spustit.sh`. |

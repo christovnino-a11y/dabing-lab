@@ -214,6 +214,13 @@ def test_cloudove_modely_ollamy_se_nenabizeji():
         assert lokalni.stav("ollama").modely == ["maly:4b"]
 
 
+def test_adresa_s_v1():
+    """Bionic ukazuje http://localhost:1234/v1, cesty API už /v1 obsahují."""
+    assert lokalni.ocisti_adresu("http://localhost:1234/v1/") == "http://localhost:1234"
+    assert lokalni.ocisti_adresu("localhost:11434") == "http://localhost:11434"
+    assert lokalni.ocisti_adresu("") == ""
+
+
 def test_nastaveni_poskozeny_soubor():
     slozka = Path(tempfile.mkdtemp())
     f = slozka / "nastaveni.json"

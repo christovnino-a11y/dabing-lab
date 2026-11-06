@@ -65,9 +65,7 @@ def uloz_adresu(sluzba: str, adresa: str, soubor: Path | None = None) -> None:
     """Adresa API služby; prázdná = výchozí (uložená se smaže). Bez schématu se doplní http://."""
     if sluzba not in lokalni.SLUZBY:
         return
-    adresa = (adresa or "").strip().rstrip("/")
-    if adresa and "://" not in adresa:
-        adresa = "http://" + adresa
+    adresa = lokalni.ocisti_adresu(adresa)
     if adresa == lokalni.VYCHOZI[sluzba]:
         adresa = ""
     if adresa == ulozena_adresa(sluzba, soubor):
