@@ -2,7 +2,7 @@
 a porovnat s textem, který měl hlas říct (CER — podíl chybných znaků).
 
 Vysoké CER prozradí zamumlanou, useknutou nebo vynechanou větu dřív, než ji
-Nino uslyší. Cizí jména psaná foneticky („Mjúz") můžou CER mírně zvednout,
+někdo uslyší. Cizí jména psaná foneticky („Mjúz") můžou CER mírně zvednout,
 proto se hlásí až od prahu.
 
 Vstup:  job.json (věty s `tts`)

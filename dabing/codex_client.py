@@ -1,6 +1,6 @@
 """Klient na `codex app-server` pro Dabing lab.
 
-Izolace (proč tak, viz poznámka dabing-lab ve vaultu):
+Izolace:
 - vlastní CODEX_HOME (`codex_home/`) — nedědí hooky, skills, MCP ani AGENTS.md,
 - prázdný pracovní adresář (`codex_cwd/`) — Codex nemá co číst ani prohledávat,
 - z prostředí se odstraní API klíče, jede se jen přes předplatné ChatGPT,

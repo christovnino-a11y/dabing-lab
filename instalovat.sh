@@ -8,7 +8,7 @@
 #   ./instalovat.sh --bez-spusteni   na konci lab nespouštět
 #   ./instalovat.sh -h               tato nápověda
 #
-# Z internetu (funguje, až bude repozitář veřejný):
+# Z internetu:
 #   curl -fsSL https://raw.githubusercontent.com/christovnino-a11y/dabing-lab/main/instalovat.sh | bash
 # Mimo klon repozitáře se naklonuje do ~/dabing-lab (jinou složku zvolí proměnná DABING_SLOZKA)
 # a pokračuje se v ní. Otázky se čtou z terminálu (/dev/tty); bez terminálu a bez --ano se nic nestahuje.
@@ -22,7 +22,6 @@
 set -euo pipefail
 
 REPO_URL="https://github.com/christovnino-a11y/dabing-lab.git"
-REPO_GH="christovnino-a11y/dabing-lab"
 CIL_VYCHOZI="${DABING_SLOZKA:-$HOME/dabing-lab}"
 CELKEM=8
 MIN_GB=15          # první instalace; aktualizace hotové instalace potřebuje jen MIN_GB_AKTUALIZACE
@@ -57,7 +56,7 @@ Dabing lab - instalace jedním příkazem (a aktualizace).
   ./instalovat.sh --bez-spusteni   na konci lab nespouštět
   ./instalovat.sh -h               tato nápověda
 
-Z internetu (až bude repozitář veřejný):
+Z internetu:
   curl -fsSL https://raw.githubusercontent.com/christovnino-a11y/dabing-lab/main/instalovat.sh | bash
 Mimo klon repozitáře se naklonuje do ~/dabing-lab (jinou složku zvolí proměnná DABING_SLOZKA).
 KONEC
@@ -553,11 +552,9 @@ main() {
                     HLASENO=1
                     {
                         echo
-                        echo "CHYBA: repozitář se nepodařilo naklonovat. Je nejspíš ještě soukromý."
-                        echo "      Přihlas se k GitHubu a naklonuj ho přes gh (potřebuješ přijatou pozvánku):"
-                        echo "          gh auth login"
-                        echo "          gh repo clone $REPO_GH ~/dabing-lab && ~/dabing-lab/instalovat.sh"
-                        echo "      (gh nainstaluješ příkazem: brew install gh)"
+                        echo "CHYBA: repozitář se nepodařilo naklonovat. Zkontroluj připojení k internetu"
+                        echo "      a spusť příkaz znovu. Ručně to jde takto:"
+                        echo "          git clone $REPO_URL ~/dabing-lab && ~/dabing-lab/instalovat.sh"
                     } >&2
                     exit 1
                 fi

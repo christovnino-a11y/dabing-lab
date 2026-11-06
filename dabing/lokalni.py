@@ -97,7 +97,7 @@ def stav(sluzba: str) -> Stav:
         return Stav(True, False, [], f"{nazev} neběží — klikni na „Zapnout server“.")
     if not modely:
         if sluzba == "ollama":
-            return Stav(True, True, [], "Stáhni si v Ollamě model podle paměti svého Macu (`ollama pull <model>`).")
+            return Stav(True, True, [], "Stáhni si v Ollamě model podle paměti svého Macu (`ollama pull jmeno-modelu`, jména jsou na ollama.com/library).")
         return Stav(True, True, [], "Stáhni si v LM Studiu model podle paměti svého Macu.")
     n = len(modely)
     slovo = "model" if n == 1 else ("modely" if n < 5 else "modelů")

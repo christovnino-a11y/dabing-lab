@@ -1,6 +1,6 @@
 ---
 name: dabing-lab
-description: Instalace, spuštění, aktualizace a řešení potíží Dabing labu (místní Gradio aplikace pro dabing videí z YouTube nebo souborů do češtiny a dalších jazyků, Apple Silicon Mac, Parakeet, Demucs, OmniVoice, Codex, Ollama nebo LM Studio) a vedení uživatele při dabingu videa. Použij, když uživatel chce dabing-lab nainstalovat, nastavit, spustit, aktualizovat, opravit nebo s ním nadabovat video, nebo když chce nainstalovat tento repozitář na čistém Macu.
+description: Instalace, spuštění, aktualizace a řešení potíží Dabing labu (místní Gradio aplikace pro dabing videí z YouTube nebo souborů do češtiny a dalších jazyků, Apple Silicon Mac, Parakeet, Demucs, OmniVoice, Codex, Ollama nebo Bionic / LM Studio) a vedení uživatele při dabingu videa. Použij, když uživatel chce dabing-lab nainstalovat, nastavit, spustit, aktualizovat, opravit nebo s ním nadabovat video, nebo když chce nainstalovat tento repozitář na čistém Macu.
 ---
 
 # Dabing lab: playbook pro AI agenta
@@ -8,7 +8,7 @@ description: Instalace, spuštění, aktualizace a řešení potíží Dabing la
 Pomáháš uživateli (často nezkušenému) nainstalovat a používat Dabing lab na jeho Macu.
 Komunikuj česky, krátce a po jednom kroku. Podrobný návod s tabulkami je v
 `docs/INSTALACE.md` (kapitoly jsou číslované, odkazuji na ně níže). Tento skill pokrývá klíčové
-kroky; úplný návod a tabulka potíží jsou v `docs/INSTALACE.md`. Skill je součástí soukromého
+kroky; úplný návod a tabulka potíží jsou v `docs/INSTALACE.md`. Skill je součástí
 repozitáře, takže se v Claude Code načte až po naklonování (krok 4 níže). Do té doby uživatele
 nasměruj na `docs/chatgpt-instrukce.md` (viz krok 4).
 
@@ -16,16 +16,16 @@ nasměruj na `docs/chatgpt-instrukce.md` (viz krok 4).
 
 1. **Nikdy nečti, nevypisuj, nekopíruj ani neposílej** soubory s přihlášením a tajemstvími:
    `codex_home/auth.json`, `~/.codex/auth.json`, tokeny, API klíče, cookies. Nevytvářej symlink
-   `~/.codex/auth.json` do `codex_home/` (to je jen pro vlastníka repozitáře). Uživatele
+   `~/.codex/auth.json` do `codex_home/` (to je jen volitelné sdílení přihlášení s Codex CLI). Uživatele
    nežádej, aby ti heslo, token nebo přihlašovací kód vložil do chatu.
 2. **Před každým velkým stažením se zeptej** a ukaž repo, velikost a licenci. Modely se
    stahují po jednom a jen po výslovném „ano" k tomu modelu (viz část 4).
 3. **Žádné `sudo`**, dokud uživatel výslovně nesouhlasí. Heslo k Macu (instalátor Homebrew)
-   a přihlášení k GitHubu zadává uživatel sám. Tyto příkazy musí uživatel spustit ve vlastním
+   zadává uživatel sám. Tyto příkazy musí uživatel spustit ve vlastním
    okně aplikace Terminál (Terminal.app), ne přes `!` a ne přes tvůj Bash nástroj, protože
    potřebují interaktivní vstup (heslo, volby, otázky [y/N]): instalace Homebrew,
-   `gh auth login`, `./scripts/stahni_modely.sh`. Ty počkej, až napíše, že doběhly, a ověř
-   výsledek (`brew --version`, `gh auth status`, `./scripts/stahni_modely.sh --list`).
+   `./instalovat.sh`, `./scripts/stahni_modely.sh`. Ty počkej, až napíše, že doběhly, a ověř
+   výsledek (`brew --version`, `./scripts/stahni_modely.sh --list`).
 4. **Nic nespouštěj naslepo opakovaně.** Když krok selže: přečti chybu a log, najdi příčinu
    (tabulka v části 9 nebo `docs/INSTALACE.md` kapitola 6), oprav ji, pak zopakuj jednou.
 5. Nemaž data uživatele (`jobs/`, HF cache, `modely/`) bez jeho souhlasu. Nikdy nespouštěj
@@ -37,16 +37,15 @@ nasměruj na `docs/chatgpt-instrukce.md` (viz krok 4).
 
 Webové UI na `http://127.0.0.1:7872`. Pipeline: yt-dlp (stažení), Demucs (hlas vs. pozadí),
 Parakeet TDT v3 (přepis, MLX), Nemotron (mluvčí), Silero VAD, BandIt Plus (jásot a efekty),
-překlad přes Codex (předplatné ChatGPT), nebo lokálně Ollama či LM Studio, OmniVoice (klon hlasu,
+překlad přes Codex (předplatné ChatGPT), nebo lokálně Ollama či Bionic / LM Studio, OmniVoice (klon hlasu,
 vlastní venv, MPS), ECAPA (kontrola hlasu), mix a export (MP4, WAV, SRT, podklad FLAC).
 Přepis, mluvčí a hlas běží vždy lokálně. Do OpenAI jde jen text vět, název a popis videa a
 webové dotazy na jména. Zvuk nikdy.
 
 ## 1b. Nejdřív instalovat.sh
 
-Instalaci dělá jeden skript: v naklonovaném repozitáři `./instalovat.sh` (soukromý repozitář:
-`gh repo clone christovnino-a11y/dabing-lab ~/dabing-lab`; po zveřejnění i
-`curl -fsSL https://raw.githubusercontent.com/christovnino-a11y/dabing-lab/main/instalovat.sh | bash`).
+Instalaci dělá jeden skript: `curl -fsSL https://raw.githubusercontent.com/christovnino-a11y/dabing-lab/main/instalovat.sh | bash`
+(naklonuje repozitář do `~/dabing-lab`; v už naklonovaném repozitáři stačí `./instalovat.sh`).
 Je idempotentní a slouží i jako aktualizace. Postup:
 
 1. Spusť `./instalovat.sh --zkouska` (nic nemění) a ukaž uživateli, co by se stalo.
@@ -75,7 +74,7 @@ Požadavky: Apple Silicon (Intel a Rosetta nepůjdou), macOS 14+, RAM aspoň 16 
 pohodlně, 8 GB nepoužitelné; lokální překladač od 24 GB), **volných 15 GB na instalaci**
 (instalace zabere ~10 GB), 30 GB na první zkoušky, 60 GB na hodinová videa.
 Když něco nesedí, řekni to hned a nepokračuj bez souhlasu. Zjisti také, zda uživatel
-má účet ChatGPT (pro překlad Codexem) a přijatou pozvánku k soukromému repozitáři.
+má účet ChatGPT (pro překlad Codexem). Účet na GitHubu nepotřebuje.
 
 **Souhlas se stažením:** před krokem 1 řekni uživateli, že instalace stáhne celkem zhruba 10 GB
 (nástroje 0,7 GB, Python prostředí 2,6 GB, modely 6,5 GB) a trvá zhruba 30 až 90 minut, a počkej
@@ -94,18 +93,15 @@ Dělej v tomto pořadí a přeskoč, co už je hotové.
    `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`
    a až po jeho dokončení `echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile`
    a `eval "$(/opt/homebrew/bin/brew shellenv)"`. Ověření: `brew --version`.
-3. **Nástroje:** `brew install ffmpeg yt-dlp uv gh`. (`yt-dlp` přitáhne `deno`, který YouTube
+3. **Nástroje:** `brew install ffmpeg yt-dlp uv`. (`yt-dlp` přitáhne `deno`, který YouTube
    potřebuje; yt-dlp musí být příkaz v PATH.) Pro lokální překlad volitelně
    `brew install ollama` nebo `brew install --cask lm-studio`. Ověření: `ffmpeg -version | head -1`, `yt-dlp --version`,
    `deno --version`, `uv --version`.
-4. **Repozitář** (soukromý, uživatel musí mít přijatou pozvánku: v e-mailu od GitHubu View
-   invitation a Accept; přihlášení dělá sám v Terminálu): nejdřív samostatně `gh auth login`
-   (GitHub.com, HTTPS, na Git credentials Y, Login with a web browser), pak `gh auth status`, pak
-   `cd ~ && gh repo clone <VLASTNIK>/dabing-lab && cd dabing-lab`. `<VLASTNIK>` zjisti od
-   uživatele (je v odkazu z pozvánky). Chyba `Could not resolve to a Repository` nebo `404`
-   znamená nepřijatou pozvánku, špatného vlastníka nebo jiný účet v `gh`. Složku pak nepřesouvej.
-   Pokud už v repozitáři jsi, tento krok přeskoč. Když uživatel ještě repozitář nemá, tento skill
-   se mu nenačetl: pomůže mu `docs/chatgpt-instrukce.md` (na github.com otevřít soubor, Raw,
+4. **Repozitář** (účet na GitHubu není potřeba):
+   `cd ~ && git clone https://github.com/christovnino-a11y/dabing-lab.git ~/dabing-lab && cd dabing-lab`.
+   Složku pak nepřesouvej. Pokud už v repozitáři jsi, tento krok přeskoč. Když uživatel ještě
+   repozitář nemá, tento skill se mu nenačetl: pomůže mu `docs/chatgpt-instrukce.md` (otevřít
+   <https://raw.githubusercontent.com/christovnino-a11y/dabing-lab/main/docs/chatgpt-instrukce.md>,
    zkopírovat celý text do ChatGPT nebo Claude v prohlížeči) a skill pro Claude Code poběží až
    po naklonování (`cd ~/dabing-lab && claude`).
 5. **Python prostředí** (v kořeni repozitáře; Python 3.12 si `uv` stáhne samo, instalace
@@ -172,12 +168,12 @@ Jak stahovat:
    Ověření nabídky po přihlášení:
    `.venv/bin/python -c "from dabing.codex_client import Codex; c=Codex(); c.start(); print(c.modely()); c.close()"`.
    Když model v nabídce není, překlad skončí „Codex překlad selhal". Kód v repozitáři neupravuj:
-   řekni uživateli, ať vlastníkovi repozitáře pošle výpis příkazu `c.modely()` (bez e-mailu), a
-   mezitím použij Ollamu nebo LM Studio.
+   řekni uživateli, ať na GitHubu otevře Issue s výpisem příkazu `c.modely()` (bez e-mailu), a
+   mezitím použij Ollamu nebo Bionic / LM Studio.
 5. Uživatel bez ChatGPT: lokální překladač v sekci „Kdo překládá" (Ollama: `brew install ollama`,
-   „Zapnout server", pak `ollama pull <model>` a „Znovu zkontrolovat"; LM Studio: model stáhne
-   v aplikaci, pak „Zapnout server"). Model si
-   vybere sám podle paměti svého Macu, žádný nedoporučuj. Když vrací prázdnou odpověď, vypnout v něm
+   „Zapnout server", pak `ollama pull jmeno-modelu` (jméno vybere uživatel na <https://ollama.com/library> podle
+   paměti svého Macu) a „Znovu zkontrolovat"; Bionic / LM Studio: model stáhne v aplikaci, pak
+   „Zapnout server", u Bionicu v části Local Model API). Žádný model nedoporučuj ani nejmenuj. Když vrací prázdnou odpověď, vypnout v něm
    přemýšlení. Lokální režim nic neposílá ven, jména neověřuje a kontrola podle snímků je vypnutá;
    Codex překládá nejlépe. Od 24 GB RAM.
 6. Řekni mu o kvótě (překlad čerpá limit předplatného; autorova měření: 16 min videa zhruba
@@ -254,7 +250,6 @@ Kde hledat: výstup terminálu s `./spustit.sh`, rozbalovátko „Log" v UI, `lo
 | `Stav účtu se nepodařilo zjistit …` | Nenaběhl přibalený Codex: stupeň 1, krok 5 znovu. |
 | `Překlad chybí u vět […]` | Neúplná odpověď; spustit znovu, hotové kroky se přeskočí. |
 | `Už běží jiný dabing — počkej, nebo ho zruš.` | Lab dělá jednu zakázku najednou; počkat nebo Zrušit. |
-| `Could not resolve to a Repository` / `404` při `gh repo clone` | Nepřijatá pozvánka, špatný `<VLASTNIK>` nebo jiný účet v `gh` (`gh auth status`). |
 | Přerušená instalace nebo stahování, `No space left on device` | Zopakuj stejný příkaz (naváže); při plném disku uvolni místo (`df -h .`). Nic nemaž naslepo. |
 | Instalace padá na `transformers @ git+…` | Chybí git (`xcode-select --install`) nebo internet. |
 | `LocalEntryNotFoundError`, „Cannot find … outgoing traffic has been disabled", `FileNotFoundError …/config.json` (Parakeet) | Model chybí v HF cache. `./spustit.sh --kontrola` řekne který; stáhni se souhlasem (část 4). Stejné `HF_HOME` pro stažení i běh. |
@@ -278,7 +273,7 @@ Kde hledat: výstup terminálu s `./spustit.sh`, rozbalovátko „Log" v UI, `lo
 Postup při jakékoli chybě: 1) přečti poslední řádky logu, 2) najdi příčinu v tabulce nebo v
 `docs/INSTALACE.md` kapitola 6, 3) řekni uživateli, co se stalo a co navrhuješ, 4) oprav
 a ověř. Nic nemaž a nepřeinstalovávej „pro jistotu". Pokud to nevyřešíš na druhý pokus,
-shrň uživateli, co jsi zkoušel, a požádej o pomoc vlastníka repozitáře (přilož poslední řádky
+shrň uživateli, co jsi zkoušel, a doporuč uživateli otevřít Issue na GitHubu (poslední řádky
 logu bez jakýchkoli tokenů).
 
 ## 10. Licence a právo (řekni uživateli jednou, při předání)

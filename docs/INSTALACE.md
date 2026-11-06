@@ -8,16 +8,16 @@ Všechno kromě překladu běží na tvém Macu.
 Tento návod je pro čistý Mac. Můžeš ho projít ručně, nebo ti s ním pomůže AI asistent:
 
 - **ChatGPT nebo Claude v prohlížeči** (nevidí tvůj počítač, jen s tebou píše a čte výpisy, které mu
-  vložíš): po přijetí pozvánky otevři na github.com soubor `docs/chatgpt-instrukce.md`, klikni na Raw
-  (nebo ikonu kopírování), zkopíruj celý text a vlož ho podle návodu v tom souboru. Funguje to i
-  v Claude Projectu na claude.ai (ten příkazy nespouští, jen tě vede).
+  vložíš): otevři
+  <https://raw.githubusercontent.com/christovnino-a11y/dabing-lab/main/docs/chatgpt-instrukce.md>,
+  zkopíruj celý text a vlož ho podle návodu v tom souboru. Funguje to i v Claude Projectu na
+  claude.ai (ten příkazy nespouští, jen tě vede).
 - **Claude Code** (spouští příkazy za tebe): nainstaluj ho (<https://claude.com/product/claude-code>),
-  proveď ručně kroky 1 až 4 (nejlíp s asistentem z předchozího bodu), pak `cd ~/dabing-lab && claude`
-  a napiš „Pomoz mi nainstalovat Dabing lab". Skill
+  proveď instalaci jedním příkazem (níže), pak `cd ~/dabing-lab && claude` a napiš „Pomoz mi
+  nainstalovat Dabing lab". Skill
   [`.claude/skills/dabing-lab/SKILL.md`](../.claude/skills/dabing-lab/SKILL.md) je součástí
-  repozitáře, takže je k dispozici **až po kroku 4 (naklonování)**. Bez Claude Code nahraj
-  `.claude/skills/dabing-lab/SKILL.md` do Claude Projectu, nebo ho vlož do chatu. Vlastník ti ho
-  (i `chatgpt-instrukce.md`) může poslat spolu s pozvánkou.
+  repozitáře, takže je k dispozici po naklonování. Bez Claude Code ho nahraj do Claude Projectu
+  nebo vlož do chatu.
 
 Interaktivní věci (heslo k Macu, přihlášení, otázky [y/N]) děláš vždy ty sám v **samostatném okně
 aplikace Terminál**, ne přes nástroj asistenta.
@@ -29,15 +29,13 @@ Enter), je to u něj napsáno.
 
 ## Instalace jedním příkazem
 
-Repozitář je soukromý: potřebuješ přijatou pozvánku a přihlášené `gh` (`brew install gh`, pak
-`gh auth login`). Pak stačí:
+Účet na GitHubu nepotřebuješ. Vlož do Terminálu:
 
 ```bash
-gh repo clone christovnino-a11y/dabing-lab ~/dabing-lab && ~/dabing-lab/instalovat.sh
+curl -fsSL https://raw.githubusercontent.com/christovnino-a11y/dabing-lab/main/instalovat.sh | bash
 ```
 
-Až bude repozitář veřejný, jde i `curl -fsSL https://raw.githubusercontent.com/christovnino-a11y/dabing-lab/main/instalovat.sh | bash`
-(naklonuje se do `~/dabing-lab`, jinou složku zvolí `DABING_SLOZKA`).
+Skript se sám naklonuje do `~/dabing-lab` (jinou složku zvolí `DABING_SLOZKA`).
 
 Skript má osm kroků: kontrola Macu (arm64, macOS 14+, aspoň 15 GB volného místa, u aktualizace 2 GB), Command Line
 Tools, Homebrew, chybějící nástroje (ffmpeg, yt-dlp, deno, uv), `git pull --ff-only` (jen v čisté
@@ -58,11 +56,10 @@ Níže je **ruční postup** (kapitola 2), kdyby skript selhal nebo ses chtěl r
 |---|---|
 | Počítač | **Mac s Apple Silicon (M1 a novější).** Intel Mac ani Rosetta nepůjdou (torch a MLX mají jen buildy pro arm64). |
 | macOS | **14 (Sonoma) nebo novější.** |
-| Paměť RAM | 24 GB je pohodlné (na něm doběhlo i 54minutové video). **16 GB je minimum**, videa zhruba do 25 až 30 minut (odhad), delší půjdou přes swap pomalu nebo selžou. 8 GB je nepoužitelné. Lokální překladač (Ollama, LM Studio) zabere RAM navíc a dává smysl až od 24 GB. |
+| Paměť RAM | 24 GB je pohodlné (na něm doběhlo i 54minutové video). **16 GB je minimum**, videa zhruba do 25 až 30 minut (odhad), delší půjdou přes swap pomalu nebo selžou. 8 GB je nepoužitelné. Lokální překladač (Ollama, Bionic / LM Studio) zabere RAM navíc a dává smysl až od 24 GB. |
 | Volné místo | Instalace zabere zhruba 10 GB (modely 6,5 GB, prostředí 2,6 GB, nástroje 0,7 GB), při instalaci navíc dočasně cache. **Mít volných aspoň 15 GB na instalaci, 30 GB na první zkoušky, 60 GB na hodinová videa** (viz kapitola 7). |
 | Internet | Při instalaci (GitHub, PyPI, Hugging Face), při stahování videí z YouTube a při překladu přes Codex. Samotný dabing modely stahovat nemusí. |
-| Přístup ke GitHubu | Repozitář je soukromý. Potřebuješ pozvánku od vlastníka a svůj účet na GitHubu. |
-| Účet ChatGPT | Pro překlad Codexem (předplatné ChatGPT, ne placené API). Bez něj použiješ lokální překladač (Ollama nebo LM Studio). |
+| Účet ChatGPT | Pro překlad Codexem (předplatné ChatGPT, ne placené API). Bez něj použiješ lokální překladač (Ollama nebo Bionic / LM Studio). |
 | Python, Git | Python 3.12 si `uv` stáhne samo, nic neinstaluj. Git dodají Command Line Tools. |
 
 Čas instalace: celá instalace trvá zhruba 30 až 90 minut (odhad, převážně stahování: kroky 1 až 3
@@ -117,12 +114,11 @@ Kontrola: `brew --version`.
 ### Krok 3: Nástroje
 
 ```bash
-brew install ffmpeg yt-dlp uv gh
+brew install ffmpeg yt-dlp uv
 ```
 
 - `yt-dlp` z Homebrew přitáhne i `deno`, což je JavaScript runtime, který YouTube vyžaduje.
   yt-dlp musí být **příkaz v PATH** (Python balíček v projektu není).
-- `gh` je jen kvůli soukromému repozitáři.
 - Volitelně, jen pro lokální překlad: `brew install ollama` nebo `brew install --cask lm-studio` (`instalovat.sh` je neinstaluje).
 
 Kontrola: `ffmpeg -version | head -1`, `ffprobe -version | head -1`, `yt-dlp --version`,
@@ -130,23 +126,11 @@ Kontrola: `ffmpeg -version | head -1`, `ffprobe -version | head -1`, `yt-dlp --v
 
 ### Krok 4: Stažení repozitáře
 
-**Pozvánku přijmi:** v e-mailu od GitHubu klikni na View invitation a Accept (nebo se přihlas na
-github.com a otevři Notifications). Jinak repozitář uvidíš jako „Not found".
-
-Přihlášení k GitHubu dělej sám. Vlož jen tento blok a odpovídej na otázky: vyber GitHub.com, HTTPS,
-na dotaz o Git credentials odpověz Y, pak Login with a web browser; kód z terminálu opiš do
-prohlížeče.
+Účet na GitHubu nepotřebuješ:
 
 ```bash
-gh auth login
-```
-
-Po dokončení vlož další blok. Místo `<VLASTNIK>` dosaď vlastníka repozitáře (je v odkazu z pozvánky):
-
-```bash
-gh auth status
 cd ~
-gh repo clone <VLASTNIK>/dabing-lab
+git clone https://github.com/christovnino-a11y/dabing-lab.git ~/dabing-lab
 cd dabing-lab
 ```
 
@@ -304,13 +288,13 @@ Pasti:
   `05e01c7f396c298cf7d23f61da7b504adeab698f0aaeafd9c82d198625464592`.
 - Silero leží ve složce `snakers4_silero-vad_master`, kterou používá i `torch.hub`. Pokud
   Silero VAD používáš v jiných projektech přes `torch.hub.load`, může se s tímhle souborem
-  míchat (existující složka se nestahuje znovu). Případná změna cesty je na vlastníkovi repozitáře.
+  míchat (existující složka se nestahuje znovu). Cestu pevně určuje `dabing/config.py`.
 
-## 4. Překlad: Codex, Ollama nebo LM Studio
+## 4. Překlad: Codex, Ollama nebo Bionic / LM Studio
 
-V aplikaci je sekce **„Kdo překládá"** se třemi volbami: **Codex**, **Ollama**, **LM Studio**.
+V aplikaci je sekce **„Kdo překládá"** se třemi volbami: **Codex**, **Ollama**, **Bionic / LM Studio**.
 U každé aplikace sama zjistí stav, ukáže další krok, nabídne rozbalovací seznam modelů a tlačítko
-**„Zapnout server"**. Volba se pamatuje v `nastaveni.json`. Lokální režim (Ollama, LM Studio)
+**„Zapnout server"**. Volba se pamatuje v `nastaveni.json`. Lokální režim (Ollama, Bionic / LM Studio)
 neposílá nic z Macu a kontrola podle snímků je v něm vypnutá.
 
 Bionic je nová aplikace LM Studia: v labu je to stejná volba **Bionic / LM Studio**, server zapneš
@@ -343,7 +327,7 @@ Přihlášení se dělá **v labu**, ne v terminálu:
 Pravidla:
 
 - **Nevytvářej symlink `~/.codex/auth.json` do `codex_home/`.** Starší návody to radily, ale je to
-  jen volitelné sdílení pro vlastníka repozitáře. Ty se přihlašuješ v labu.
+  jen volitelné sdílení přihlášení s Codex CLI. Ty se přihlašuješ v labu.
 - Soubor `codex_home/auth.json` je tvé přihlášení: nikomu ho neposílej, nekopíruj ani nevkládej do
   chatu. Je v `.gitignore`.
 - Lab přijme jen přihlášení účtem **ChatGPT** (předplatné). Přihlášení API klíčem odmítne a
@@ -355,8 +339,8 @@ Pravidla:
   .venv/bin/python -c "from dabing.codex_client import Codex; c=Codex(); c.start(); print(c.modely()); c.close()"
   ```
 
-  Když model v seznamu není, překlad skončí chybou „Codex překlad selhal". Kód neupravuj: pošli
-  vlastníkovi repozitáře výpis příkazu `c.modely()` (bez e-mailu) a mezitím použij Ollamu nebo LM Studio.
+  Když model v seznamu není, překlad skončí chybou „Codex překlad selhal". Kód neupravuj: otevři
+  na GitHubu Issue s výpisem příkazu `c.modely()` (bez e-mailu) a mezitím použij Ollamu nebo Bionic / LM Studio.
 - **Soukromí:** do OpenAI jde text vět, název a popis videa a dotazy na ověření jmen, produktů a
   čísel na webu. **Zvuk nikdy.** Lokální překladače (Ollama, LM Studio) neposílají nic.
 - **Kvóta:** překlad čerpá limit předplatného. Z měření autora: 16minutové video zhruba 16 % hlavního
@@ -368,17 +352,18 @@ Pravidla:
 
 1. `brew install ollama`.
 2. V aplikaci zvol Ollamu a klikni **„Zapnout server"**. Bez běžícího serveru model stáhnout nejde.
-3. Stáhni si model podle paměti svého Macu: `ollama pull <model>` (velikost modelu je u něj na
-   <https://ollama.com/library>). Volba je na tobě.
+3. Stáhni si model podle paměti svého Macu: `ollama pull jmeno-modelu`. Jméno modelu vezmi z
+   <https://ollama.com/library> a vyber ho podle paměti svého Macu (velikost je u každého modelu
+   uvedená). Volba je na tobě.
 4. Klikni **„Znovu zkontrolovat"** a v rozbalovacím seznamu vyber model. Seznam ukáže všechny
    stažené modely kromě cloudových, ty běží mimo Mac.
 
-### LM Studio (lokálně, nic neodchází z Macu)
+### Bionic / LM Studio (lokálně, nic neodchází z Macu)
 
 1. `brew install --cask lm-studio`, v aplikaci si stáhni model podle paměti svého Macu (potřebuje
    slušnou češtinu).
-2. V aplikaci labu zvol LM Studio a klikni **„Zapnout server"** (nebo v LM Studiu Developer,
-   Start Server na `http://127.0.0.1:1234`). Pak v rozbalovacím seznamu vyber model.
+2. V aplikaci labu zvol Bionic / LM Studio a klikni **„Zapnout server"** (nebo v Bionicu v části
+   Local Model API spusť server na `http://127.0.0.1:1234`). Pak v rozbalovacím seznamu vyber model.
 3. Když model vrací prázdnou odpověď, vypni v něm přemýšlení (thinking/reasoning).
 4. Rychlý test: `curl -s http://127.0.0.1:1234/v1/models`. Model zabírá RAM navíc.
 
@@ -504,10 +489,9 @@ v `logy/omnivoice.log`. **Neopakuj slepě**: nejdřív si přečti, co skutečn�
 | `Stav účtu se nepodařilo zjistit …` | Nenaběhl přibalený Codex | Zkus stupeň 1 (`codex-cli 0.154.0`). Zopakuj krok 5. |
 | `Codex překlad selhal (failed): …` | Vyčerpaná kvóta, nebo model `gpt-5.6-terra` účet nemá | Počkej na reset limitu, přepni na Ollamu či LM Studio, nebo ověř modely (kapitola 4). |
 | `Překlad chybí u vět […]` | Neúplná odpověď | Spusť znovu, hotové kroky se přeskočí. |
-| `gh repo clone` hlásí `Could not resolve to a Repository` nebo `404` | Pozvánka není přijatá, špatný `<VLASTNIK>`, nebo jsi v `gh auth login` zvolil jiný účet | Přijmi pozvánku, ověř `gh auth status` (správný účet) a přesné jméno vlastníka z odkazu v pozvánce. |
 | Instalace nebo stahování se přerušilo (zavřené okno, vypadlý internet, uspání) | Přerušený krok | Zopakuj stejný příkaz: `uv`, `brew` i stahování modelů naváží a hotové přeskočí. Nic nemaž a nepřeinstalovávej. |
 | `No space left on device` | Plný disk | Uvolni místo (`df -h .`), zopakuj krok. Úklid: kapitola 9. Nic nemaž naslepo. |
-| `git pull` hlásí, že by přepsal `uv.lock` (untracked working tree files) | Lokálně vzniklý `uv.lock`, který vlastník mezitím přidal do repozitáře | Smaž lokální soubory (`rm -f uv.lock worker/omnivoice/uv.lock`), spusť `git pull` znovu a pak příkazy z kroku 5. |
+| `git pull` hlásí, že by přepsal `uv.lock` (untracked working tree files) | Lokálně vzniklý `uv.lock`, který mezitím přibyl v repozitáři | Smaž lokální soubory (`rm -f uv.lock worker/omnivoice/uv.lock`), spusť `git pull` znovu a pak příkazy z kroku 5. |
 | `Bionic / LM Studio neběží …` / prázdná odpověď | Server neběží, nebo model vrací prázdnou odpověď (zapnuté přemýšlení) | Kapitola 4: „Zapnout server", případně vypnout thinking. |
 | `Věta N: Worker skončil (nejspíš chyba MPS) … restartuji worker` | Chyba paměti GPU shodila hlasový proces | Ojedinělé je v pořádku. Při opakování (`worker opakovaně spadl`) zavři těžké aplikace (hlavně LM Studio s modelem), restartuj lab a spusť znovu. Hotové kroky se nepočítají znovu. |
 | `Worker neodpověděl do 60 s` | Úplně první start nového prostředí (příčina neověřena) | Zkus znovu. |
@@ -595,7 +579,7 @@ uv cache clean
 ```
 
 Celý projekt (včetně `.venv`, `modely/` a `codex_home/`) odstraníš smazáním složky `dabing-lab`.
-Nástroje z Homebrew (`brew uninstall ffmpeg yt-dlp deno uv gh`) odstraň jen pokud je jinde nepoužíváš.
+Nástroje z Homebrew (`brew uninstall ffmpeg yt-dlp deno uv`) odstraň jen pokud je jinde nepoužíváš.
 Python 3.12 od `uv`: `uv python uninstall 3.12` (jen když ho nepotřebují jiné projekty).
 
 ## 10. Licence a právo

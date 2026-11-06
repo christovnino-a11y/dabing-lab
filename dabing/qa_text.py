@@ -4,7 +4,7 @@
 z UI a z testů. Dvě míry:
 - `cer`: podíl chybných znaků celé věty (zachytí zamumlanou, useknutou nebo vynechanou větu),
 - `zkomolena_slova`: jednotlivá slova, která hlas vyslovil jako zkomolenou variantu („generaci" →
-  „genesraci"). V dlouhé větě takové slovo CER sotva zvedne (~0,10), a přesto ho Nino uslyší.
+  „genesraci"). V dlouhé větě takové slovo CER sotva zvedne (~0,10), a přesto ho divák uslyší.
 """
 
 from __future__ import annotations

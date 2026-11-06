@@ -1,9 +1,9 @@
 # Vlastní CODEX_HOME Dabing labu.
 #
-# Nedědí ~/.codex: žádné hooky, skills, MCP servery ani AGENTS.md (pokyn číst
-# Obsidian vault by zdržoval a zbytečně nafukoval každý turn).
-# auth.json vzniká přihlášením v labu (sekce „Codex účet", předplatné ChatGPT, žádný API klíč);
-# u vlastníka repozitáře je to symlink na ~/.codex/auth.json. Do gitu nejde (.gitignore).
+# Nedědí ~/.codex: žádné hooky, skills, MCP servery ani AGENTS.md (zdržovaly by a zbytečně
+# nafukovaly každý turn).
+# auth.json vzniká přihlášením v labu (sekce „Kdo překládá", předplatné ChatGPT, žádný API klíč)
+# nebo je to volitelný symlink na ~/.codex/auth.json. Do gitu nejde (.gitignore).
 #
 # Model a effort se dají přebít při thread/start; tady jsou výchozí hodnoty.
 

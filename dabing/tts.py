@@ -416,7 +416,7 @@ class Hlas:
 
     def _identita(self, prubeh: Prubeh) -> None:
         """Hlídač identity až na hotových větách. Doladění délek přegeneruje stovky vět a hlas
-        nového pokusu může ujet (2026-09-29: 54 z 275 vět pplk. Knapka, třeba 0,79 → 0,31, když
+        nového pokusu může ujet (2026-09-29: 54 z 275 vět jednoho řečníka, třeba 0,79 → 0,31, když
         se hlídalo před doladěním). Věta, která hlasem vybočuje z řady mluvčího, se namluví znovu
         (jiný seed; emoční reference → kotva nebo stálá), znovu dostane délku do slotu a zůstane
         lepší pokus — nejdřív bez přesahu do další věty, pak podle podobnosti."""
@@ -451,7 +451,7 @@ class Hlas:
 
             def zmer(v: Veta) -> None:
                 """Podobnost s vlastní referencí a náskok před nejpodobnějším jiným mluvčím
-                (obojí se skutečnými hlasy): klon z kotvy u Knapka zněl jako moderátor, ač
+                (obojí se skutečnými hlasy): klon z kotvy zněl jako moderátor, ač
                 podobnost s vlastní kotvou vypadala v řadě (2026-09-30)."""
                 v.identita = self._podobnost(v, srovnat(v))
                 naskoky[v.id] = None

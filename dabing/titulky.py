@@ -1,6 +1,6 @@
 """Ruční titulky od autora videa jako text vět pro překlad (stahuje je media.stahni_titulky).
 
-Nino 2026-09-28: „nejdřív originál, když nepůjde, naše STT". Text věty pro překladač se bere
+Pořadí: nejdřív originál, když nepůjde, náš přepis. Text věty pro překladač se bere
 z titulků od autora, kde je mají; jinak z našeho přepisu. Překladač u rozdílných vět vidí obojí.
 Automatické titulky YouTube se nepoužívají (viz media._vyber_titulky): Codex s nimi převzal
 jejich věrohodné chyby, kdežto nesmysly našeho přepisu opraví podle smyslu sám.

@@ -38,7 +38,7 @@ NADECH_PRED_SLOVEM_S = 0.6      # nádech před slovem pauzu neotevírá…
 NADECH_POD_RECI_DB = 15.0       # …když je aspoň o tolik tišší než řeč
 RECI_MIMO_MAX_ODSTUP_S = 2.0    # řeč bez věty takhle blízko dabované věty = výplň téhož mluvčího
 RECI_MIMO_MIN_S = 0.1           # kratší záblesk detektoru řeči se ignoruje
-RECI_MIMO_MAX_S = 2.0           # výplně jsou krátké (Knapek ≤ 1,6 s); delší je zpěv nebo celá řeč
+RECI_MIMO_MAX_S = 2.0           # výplně jsou krátké (v měřeném rozhovoru ≤ 1,6 s); delší je zpěv nebo celá řeč
 RECI_MIMO_OKOLI_CHRANENYCH_S = 0.15  # běh řeči, který se dotýká věty bez překladu, zůstane celý
 EPS = 1e-6
 
@@ -187,7 +187,7 @@ def useky_mimo_vet(useky: list[tuple[float, float, float]], k: Kontext,
                    max_odstup_s: float = RECI_MIMO_MAX_ODSTUP_S) -> list[tuple[float, float, float]]:
     """Řeč podle detektoru řeči mimo slova dabovaných vět, ale nejvýš `max_odstup_s` od nich:
     krátké nepřepsané výplně dabovaného mluvčího („ehm", „no", nedořečená slova). Bez odečtu by
-    mezi větami zazněl jeho původní hlas (Knapek 2026-09-30: 114 úseků, ~94 s). Zůstává
+    mezi větami zazněl jeho původní hlas (rozhovor 2026-09-30: 114 úseků, ~94 s). Zůstává
     v originále: řeč daleko od dabovaných vět, dlouhé úseky (zpěv v hudbě, nepřepsaný monolog)
     a celý běh řeči, ve kterém leží věta bez překladu (jinak by se její okolí rozsekalo)."""
     if k.vad is None or not len(k.vad) or not useky:

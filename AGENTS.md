@@ -7,8 +7,8 @@ a řešení potíží** postupuj podle `.claude/skills/dabing-lab/SKILL.md` (pla
 
 Pravidla: před každým velkým stažením se zeptej (repo, velikost, licence), nikdy nečti ani
 nevypisuj `codex_home/auth.json` a tokeny, přihlášení ke Codexu se dělá v UI labu, žádné `sudo`
-bez souhlasu uživatele. Interaktivní příkazy (heslo, `gh auth login`, `./instalovat.sh`, `./scripts/stahni_modely.sh`)
+bez souhlasu uživatele. Interaktivní příkazy (heslo, `./instalovat.sh`, `./scripts/stahni_modely.sh`)
 spouští uživatel v samostatném okně Terminálu, ne ty. Váhy OmniVoice jsou CC-BY-NC, tedy jen
 nekomerční použití. Klonuje se hlas každého mluvčího ve videu, souhlas je potřeba od všech.
-Překladač (Codex, Ollama, LM Studio) a jeho model volí uživatel v aplikaci podle paměti svého Macu;
+Překladač (Codex, Ollama, Bionic / LM Studio) a jeho model volí uživatel v aplikaci podle paměti svého Macu;
 žádný model nedoporučuj ani neinstaluj.

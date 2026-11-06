@@ -24,7 +24,7 @@ MODEL_ASR = "mlx-community/parakeet-tdt-0.6b-v3"
 MODEL_DIAR = "nvidia/Nemotron-3-Diarization"
 MODEL_SEPARACE = "hf://htdemucs"  # jen s prefixem hf:// se nenačítá z internetu
 SEPARACE_VERZE = 2                # 2 = pozadí je přesný doplněk (vstup − hlas)
-# BandIt Plus (dialog / hudba / efekty, trénovaný na DnR) z releasu MSST v.1.0.3 (stáhl Nino
+# BandIt Plus (dialog / hudba / efekty, trénovaný na DnR) z releasu MSST v.1.0.3 (stažený
 # 2026-09-28); kód a yaml v dabing/vendor/bandit. Má dát do řeči jen řeč, ne jásot, smích
 # ani zpěv — ověřuje se (viz dabing/stages/dialog.py). Licence vah neověřená (Zenodo 10160698).
 MODEL_DIALOG_CHECKPOINT = LAB / "modely" / "bandit_plus" / "model_bandit_plus_dnr_sdr_11.47.chpt"
@@ -53,13 +53,13 @@ JAZYKY_ZDROJE = {nazev: kod for kod, (nazev, _) in ORIGINAL.items()}   # nabídk
 # hlasem namluví pevnou větu v cílovém jazyce a všechny jeho věty se klonují z ní: hlas zůstane
 # jeho, výslovnost je rodilá (z anglické reference by se přenesl anglický přízvuk). Cena: emoce
 # jednotlivých vět se přenášejí méně. "veta" = klon z každé původní věty (emoce, ale přízvuk).
-# Nino zvolil kotvu po poslechu 2026-09-28.
+# Kotva vybrána po poslechu 2026-09-28.
 REFERENCE_HLASU = "kotva"
 KOTVA_TEXT = {kod: j.kotva for kod, j in DABING.items()}
 KOTVA_SEEDY = (1, 2, 3)  # tři pokusy, vyhraje ten nejpodobnější hlasu mluvčího
 KOTVA_MIN_PODOBNOST = 0.30  # méně = kotva nezní jako mluvčí (krátká reference) → klon z jeho vět
 # Blízké jazyky: skutečný hlas mluvčího zní v cílovém jazyce přirozeně (cizí přízvuk nehrozí)
-# a klon z kotvy (klon klonu) by jen ujížděl — 2026-09-30, cs → sk, pplk. Knapek: podobnost
+# a klon z kotvy (klon klonu) by jen ujížděl — 2026-09-30, cs → sk, řečník v interview: podobnost
 # s ním 0,89 ze skutečného hlasu vs 0,53 z kotvy, 75 z 275 vět znělo spíš jako moderátor.
 # Kotva se u nich namluví jen kvůli změření rychlosti řeči, věty se klonují ze stálé reference.
 BLIZKE_JAZYKY = ({"cs", "sk"},)
