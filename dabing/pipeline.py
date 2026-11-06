@@ -16,7 +16,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from . import media, mix, qa_text, rozdeleni, segmenty, slouceni, snimky, translate
+from . import lokalni, media, mix, qa_text, rozdeleni, segmenty, slouceni, snimky, translate
 from .config import JOBS, LAB, MODEL_DIALOG_CHECKPOINT, PYTHON, offline_env
 from .job import Zakazka, id_ze_souboru
 from .stages import pohlavi as pohlavi_stage
@@ -101,7 +101,7 @@ class Pipeline:
 
     def priprav(self, zdroj: str, jazyk: str, prekladac: str, pocet_mluvcich: int | None,
                 jazyk_zdroje: str = "auto", pohlavi_rucne: dict | None = None,
-                snimky_pohlavi: bool | None = None) -> Zakazka:
+                snimky_pohlavi: bool | None = None, model_prekladu: str = "") -> Zakazka:
         """Založí nebo načte zakázku a stáhne/zkopíruje zdroj."""
         hlaseni = self._faze("stazeni")
         cesta = Path(zdroj).expanduser()
@@ -124,11 +124,12 @@ class Pipeline:
                 z.kroky.pop("preklad", None)
                 z.kroky.pop("hlas", None)
             z.jazyk, z.prekladac, z.pocet_mluvcich = jazyk, prekladac, pocet_mluvcich
+            z.model_prekladu = model_prekladu  # sama změna modelu nepřekládá znovu
             z.jazyk_zdroje = jazyk_zdroje
         else:
             z = Zakazka(id=id_, zdroj=zdroj, nazev=nazev, delka_s=delka_s, jazyk=jazyk,
                         jazyk_zdroje=jazyk_zdroje,
-                        prekladac=prekladac, pocet_mluvcich=pocet_mluvcich,
+                        prekladac=prekladac, model_prekladu=model_prekladu, pocet_mluvcich=pocet_mluvcich,
                         vytvoreno=time.strftime("%Y-%m-%d %H:%M:%S"))
         if info:
             z.popis = info["popis"]
@@ -253,7 +254,7 @@ class Pipeline:
             if x.get("f0") is not None:
                 x["pohlavi"] = pohlavi_stage.urci(x["f0"])
         z.pohlavi = {m: x["pohlavi"] for m, x in zmereno.items() if x.get("pohlavi") in ("m", "z")}
-        if z.snimky_pohlavi:
+        if z.snimky_pohlavi and z.prekladac == "codex":  # lokální režim nesmí poslat ani snímky
             # se souhlasem ověřit snímky KAŽDÉHO mluvčího: výška hlasu se plete i mimo hranici
             # (muž na pódiu hlas zvedá — Jensen Huang 167 Hz vyšel jako žena); co je vidět, má přednost
             for m in sorted(mluvci - set(z.pohlavi_rucne), key=int):
@@ -413,7 +414,8 @@ class Pipeline:
         if all(v.cs for v in z.vety) and "preklad" in z.kroky:
             translate.dolad_delky(z, self.log, self._faze("preklad"))
             return
-        kdo = "Codex" if z.prekladac == "codex" else "lokální model v LM Studiu"
+        kdo = ("Codex" if z.prekladac == "codex" else
+               f"{lokalni.NAZVY.get(z.prekladac, z.prekladac)}, model {z.model_prekladu or 'první dostupný'}")
         self.log(f"Překládám ({kdo})…")
         translate.preloz(z, self.log, self._faze("preklad"))
         if translate.over_rod(z, self.log):  # překladač rod nedodržel → jeden pokus navíc
@@ -536,9 +538,10 @@ class Pipeline:
 
     def cely(self, zdroj: str, jazyk: str, prekladac: str, pocet_mluvcich: int | None,
              jazyk_zdroje: str = "auto", pohlavi_rucne: dict | None = None,
-             snimky_pohlavi: bool | None = None) -> tuple[Zakazka, dict[str, Path]]:
+             snimky_pohlavi: bool | None = None,
+             model_prekladu: str = "") -> tuple[Zakazka, dict[str, Path]]:
         z = self.priprav(zdroj, jazyk, prekladac, pocet_mluvcich, jazyk_zdroje, pohlavi_rucne,
-                         snimky_pohlavi)
+                         snimky_pohlavi, model_prekladu)
         self.analyzuj(z)
         self.kotvy(z)
         self.preloz(z)

@@ -2,10 +2,45 @@
 
 YouTube video (nebo vlastní soubor) do češtiny: přepis, mluvčí, překlad a hlas
 naklonovaný z originálu včetně emocí. Gradio na **http://127.0.0.1:7872**,
-spouští se příkazem `./spustit.sh`.
+spouští se příkazem `dabing`.
 
 Jen pro Mac s Apple Silicon. Repozitář je soukromý a obsahuje jen kód: modely, videa,
 zakázky ani přihlášení v něm nejsou.
+
+## Instalace
+
+Jeden příkaz nainstaluje všechno (Command Line Tools, Homebrew, nástroje, Python prostředí, na
+požádání modely) a na konci otevře aplikaci. Repozitář je soukromý, potřebuješ přijatou
+pozvánku a přihlášené `gh` (`brew install gh`, pak `gh auth login`):
+
+```bash
+gh repo clone christovnino-a11y/dabing-lab ~/dabing-lab && ~/dabing-lab/instalovat.sh
+```
+
+Až bude repozitář veřejný, bude stačit toto (skript se sám naklonuje do `~/dabing-lab`):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/christovnino-a11y/dabing-lab/main/instalovat.sh | bash
+```
+
+Skript se před modely (zhruba 6,5 GB, váhy OmniVoice jsou CC-BY-NC, tedy jen nekomerčně) zeptá
+jednou. `./instalovat.sh --zkouska` nic nezmění a jen vypíše, co by udělal; další přepínače:
+`--ano`, `--bez-modelu`, `--bez-spusteni`, `-h`. Ruční postup krok za krokem je v
+[docs/INSTALACE.md](docs/INSTALACE.md).
+
+## Spuštění
+
+```bash
+dabing
+```
+
+Otevře prohlížeč na `http://127.0.0.1:7872` (okno Terminálu nech otevřené, `Ctrl+C` lab ukončí).
+Příkaz `dabing` vytvoří instalace; bez něj `cd ~/dabing-lab && ./spustit.sh`.
+
+## Aktualizace
+
+Znovu spusť `~/dabing-lab/instalovat.sh`: stáhne novou verzi kódu, doplní prostředí a modely a
+hotové přeskočí.
 
 ## Požadavky
 
@@ -13,80 +48,38 @@ zakázky ani přihlášení v něm nejsou.
 - **RAM:** 24 GB pohodlné, 16 GB minimum (videa zhruba do 25 až 30 minut, odhad), 8 GB nepoužitelné.
 - **Volné místo:** 15 GB na instalaci (zabere zhruba 10 GB, z toho modely 6,5 GB), 30 GB na první
   zkoušky, 60 GB na hodinová videa.
-- Homebrew, `ffmpeg`, `yt-dlp` (i s `deno`), `uv`, `git`. Python 3.12 si `uv` stáhne samo.
-- Účet ChatGPT pro překlad Codexem (nebo LM Studio pro režim „Plně lokální").
+- Homebrew, `ffmpeg`, `yt-dlp` (i s `deno`), `uv`, `git`: nainstaluje `instalovat.sh`. Python 3.12 si `uv` stáhne samo.
+- Překladač: účet ChatGPT pro Codex (nejlepší překlad), nebo lokálně Ollama či LM Studio (nic neodchází z Macu).
 - Dabing trvá zhruba 3 až 8násobek délky videa (měření na M4 Pro, 24 GB RAM).
 
-## Rychlý start
+## Po instalaci
 
-Podrobný návod pro čistý Mac je v **[docs/INSTALACE.md](docs/INSTALACE.md)**. Na čistém Macu
-(bez Homebrew a gitu) začni tam od kroku 1: zkratka níže je pro ty, kdo už mají Command Line Tools
-a Homebrew. Terminál otevřeš přes Spotlight (Cmd+Mezerník, napiš Terminal, Enter). Vkládej vždy
-**jen jeden blok** a počkej, až doběhne, než vložíš další.
-
-```bash
-brew install ffmpeg yt-dlp uv gh
-```
-
-`yt-dlp` přitáhne i `deno`. Pak přihlášení k GitHubu (interaktivní, dělej sám):
-
-```bash
-gh auth login
-```
-
-Vyber GitHub.com, HTTPS, na dotaz o Git credentials odpověz Y, pak Login with a web browser a opiš
-kód z terminálu do prohlížeče. Repozitář je soukromý, potřebuješ přijatou pozvánku (v e-mailu od
-GitHubu klikni na View invitation a Accept). Místo `<VLASTNIK>` dosaď jméno vlastníka z odkazu v pozvánce:
-
-```bash
-gh repo clone <VLASTNIK>/dabing-lab
-cd dabing-lab
-```
-
-Python prostředí: hlavní (`.venv`) a pro hlas (`worker/omnivoice/.venv`). Příkaz jde bezpečně
-zopakovat (oprava, aktualizace):
-
-```bash
-if [ -f uv.lock ]; then uv sync --frozen; else uv venv --python 3.12 --allow-existing && uv pip install -r pyproject.toml; fi
-(cd worker/omnivoice && uv sync)
-```
-
-Modely po jednom (u každého ukáže velikost a licenci a zeptá se [y/N]; `--list` jen vypíše
-tabulku), kontrola a spuštění:
-
-```bash
-./scripts/stahni_modely.sh
-./spustit.sh --kontrola
-./spustit.sh
-```
-
-Poslední příkaz spustí lab a otevře prohlížeč. Okno Terminálu nech otevřené, dokud lab používáš
-(`Ctrl+C` ho ukončí). Příště: `cd ~/dabing-lab && ./spustit.sh` (cesta podle toho, kam jsi
-repozitář naklonoval).
-
-1. **Modely** (zhruba 6,5 GB) se stahují do standardní cache Hugging Face, protože lab běží offline
-   (`HF_HUB_OFFLINE=1`). `./scripts/stahni_modely.sh --list` jen vypíše tabulku a nic nestáhne.
-   Bez povinných modelů `./spustit.sh` odmítne nastartovat.
-2. **Přihlášení ke Codexu se dělá v UI labu**: sekce „Codex účet (překlad)", tlačítko
-   „Přihlásit kódem" nebo „Přihlásit v prohlížeči", účtem ChatGPT. Žádné `npm i -g @openai/codex`
-   a žádný symlink na `~/.codex/auth.json` nejsou potřeba. Přihlášení se uloží do
-   `codex_home/auth.json` (v `.gitignore`, nikomu ho neposílej).
+1. **Modely** (zhruba 6,5 GB) jsou ve standardní cache Hugging Face, protože lab běží offline
+   (`HF_HUB_OFFLINE=1`). `./scripts/stahni_modely.sh --list` jen vypíše tabulku. Bez povinných
+   modelů `./spustit.sh` odmítne nastartovat.
+2. **Kdo překládá** se volí v aplikaci (sekce „Kdo překládá"): Codex, Ollama nebo LM Studio. Aplikace
+   u každé volby ukáže stav a další krok. Přihlášení ke Codexu se dělá tamtéž účtem ChatGPT
+   (tlačítko „Přihlásit kódem" nebo „Přihlásit v prohlížeči"); žádné `npm i -g @openai/codex` ani
+   symlink na `~/.codex/auth.json` nejsou potřeba. Přihlášení se uloží do `codex_home/auth.json`
+   (v `.gitignore`, nikomu ho neposílej). Lokální model (Ollama, LM Studio) si stáhni podle paměti
+   svého Macu, viz [docs/INSTALACE.md](docs/INSTALACE.md), kapitola 4.
 3. První zkoušku udělej na vlastní nahrávce (1 až 2 minuty), viz kapitola 5 v
    [docs/INSTALACE.md](docs/INSTALACE.md).
 
 ## Pomoc od AI asistenta
 
 Skill i návod pro ChatGPT leží v soukromém repozitáři. **Skill pro Claude Code je tedy k dispozici
-až po naklonování (krok 4 v [docs/INSTALACE.md](docs/INSTALACE.md))**. Kroky 1 až 4 proveď ručně
-podle návodu, nebo s ChatGPT či Claude v prohlížeči: po přijetí pozvánky otevři na github.com
+až po naklonování** (příkaz `gh repo clone` z části Instalace). Samotnou instalaci pak udělá
+`instalovat.sh`; nemáš-li ještě repozitář, proveď ručně kroky 1 až 4 z
+[docs/INSTALACE.md](docs/INSTALACE.md), nebo s ChatGPT či Claude v prohlížeči: po přijetí pozvánky otevři na github.com
 soubor `docs/chatgpt-instrukce.md`, klikni na Raw (nebo ikonu kopírování), zkopíruj celý text a vlož
 ho podle návodu v tom souboru (asistent v prohlížeči příkazy nespouští, jen tě vede a čte výpisy,
 které mu vložíš). Vlastník ti může soubor `docs/chatgpt-instrukce.md` nebo `.claude/skills/dabing-lab/SKILL.md`
 poslat i s pozvánkou.
 
 - **Claude Code** (nebo jiný agent, který umí spouštět příkazy): nainstaluj ho
-  (<https://claude.com/product/claude-code>), proveď ručně kroky 1 až 4, pak ve složce `dabing-lab`
-  spusť `claude` a napiš „Nainstaluj dabing lab". Skill
+  (<https://claude.com/product/claude-code>), naklonuj repozitář, pak ve složce `dabing-lab`
+  spusť `claude` a napiš „Nainstaluj dabing lab" (použije `instalovat.sh`). Skill
   [.claude/skills/dabing-lab/SKILL.md](.claude/skills/dabing-lab/SKILL.md) se načte ze složky projektu,
   ptá se před každým velkým stažením. Interaktivní příkazy (heslo, přihlášení, [y/N]) spouštíš ty
   v samostatném okně Terminálu. Agenty Codexu a další odkazuje [AGENTS.md](AGENTS.md).
@@ -104,7 +97,7 @@ poslat i s pozvánkou.
 | Přepis se slovními časy | Parakeet TDT 0.6B v3 (MLX) | `dabing/stages/asr_local.py` |
 | Mluvčí | Nemotron-3-Diarization | `dabing/stages/diar.py` |
 | Věty pro dabing | vlastní skládání ze slov | `dabing/segmenty.py` |
-| Překlad + výslovnost | Codex (dávkově) nebo LM Studio | `dabing/translate.py` |
+| Překlad + výslovnost | Codex (dávkově), Ollama nebo LM Studio | `dabing/translate.py` |
 | Hlas | OmniVoice klon (worker, vlastní venv) | `dabing/tts.py`, `worker/omnivoice/` |
 | Kontrola srozumitelnosti | zpětný přepis Parakeetem (CER) | `dabing/stages/qa_zpet.py` |
 | Detekce řeči (ořez konců slov) | Silero VAD (CPU) | `dabing/stages/vad.py` |
@@ -123,6 +116,10 @@ překladu v tabulce se přegenerují jen změněné věty.
 - **Délka**: překlad cílí na ~95 % času originálu (OmniVoice mluví česky zhruba 17,5 znaku/s).
   Dlouhé věty Codex zkrátí, krátké se mírně zpomalí (nejvýš na 0,8×), nic se nezrychluje
   víc než 1/0,85.
+- **Kontroly**: lab zjistí pohlaví z obrazu u každého mluvčího (jen s Codexem a zaškrtnutým políčkem),
+  sloučí rozpadlé mluvčí, po překladu zkontroluje shodu pohlaví a hlídá zkomolená slova, která
+  přednese znovu. Lokální překladač nic neposílá ven, a proto kontrola podle snímků v něm odpadá.
+- **Překlad**: Codex je nejlepší a umí ověřit jména na webu; lokální modely jména neověřují.
 - **Výslovnost**: Codex vrací ke každé větě i `vyslov` (cizí jména foneticky: „Mjúz",
   „ví em", „éj áj"); titulky zůstávají normálně.
 

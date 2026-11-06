@@ -27,17 +27,42 @@ Terminál otevřeš přes Spotlight (Cmd+Mezerník, napiš Terminal, Enter). Do 
 jeden blok** a počkej, až doběhne, než vložíš další. Kde blok čeká na tvůj vstup (heslo, volby,
 Enter), je to u něj napsáno.
 
+## Instalace jedním příkazem
+
+Repozitář je soukromý: potřebuješ přijatou pozvánku a přihlášené `gh` (`brew install gh`, pak
+`gh auth login`). Pak stačí:
+
+```bash
+gh repo clone christovnino-a11y/dabing-lab ~/dabing-lab && ~/dabing-lab/instalovat.sh
+```
+
+Až bude repozitář veřejný, jde i `curl -fsSL https://raw.githubusercontent.com/christovnino-a11y/dabing-lab/main/instalovat.sh | bash`
+(naklonuje se do `~/dabing-lab`, jinou složku zvolí `DABING_SLOZKA`).
+
+Skript má osm kroků: kontrola Macu (arm64, macOS 14+, aspoň 15 GB volného místa, u aktualizace 2 GB), Command Line
+Tools, Homebrew, chybějící nástroje (ffmpeg, yt-dlp, deno, uv), `git pull --ff-only` (jen v čisté
+složce na `main`), Python prostředí, modely (jedna otázka, zhruba 6,5 GB; váhy OmniVoice jsou
+CC-BY-NC, tedy jen nekomerčně) a příkaz `dabing` (odkaz `~/.local/bin/dabing`, případně řádek v
+`~/.zshrc` po upozornění). Pak spustí `./spustit.sh --kontrola` a lab. Hotové kroky přeskočí, takže
+je to zároveň aktualizace. Ollamu ani LM Studio neinstaluje: překladač se volí v aplikaci.
+
+Přepínače: `--zkouska` (nic nezmění, jen vypíše, co by udělal), `--ano` (bez otázek, včetně
+stažení modelů), `--bez-modelu`, `--bez-spusteni`, `-h`. Bez terminálu a bez `--ano` se nic
+nestahuje. Heslo k Macu (Homebrew) a přihlášení zadáváš sám v okně Terminálu.
+
+Níže je **ruční postup** (kapitola 2), kdyby skript selhal nebo ses chtěl rozhodovat po krocích.
+
 ## 1. Požadavky
 
 | Položka | Požadavek |
 |---|---|
 | Počítač | **Mac s Apple Silicon (M1 a novější).** Intel Mac ani Rosetta nepůjdou (torch a MLX mají jen buildy pro arm64). |
 | macOS | **14 (Sonoma) nebo novější.** |
-| Paměť RAM | 24 GB je pohodlné (na něm doběhlo i 54minutové video). **16 GB je minimum**, videa zhruba do 25 až 30 minut (odhad), delší půjdou přes swap pomalu nebo selžou. 8 GB je nepoužitelné. Režim „Plně lokální" (překlad v LM Studiu) doporučujeme až od 24 GB. |
+| Paměť RAM | 24 GB je pohodlné (na něm doběhlo i 54minutové video). **16 GB je minimum**, videa zhruba do 25 až 30 minut (odhad), delší půjdou přes swap pomalu nebo selžou. 8 GB je nepoužitelné. Lokální překladač (Ollama, LM Studio) zabere RAM navíc a dává smysl až od 24 GB. |
 | Volné místo | Instalace zabere zhruba 10 GB (modely 6,5 GB, prostředí 2,6 GB, nástroje 0,7 GB), při instalaci navíc dočasně cache. **Mít volných aspoň 15 GB na instalaci, 30 GB na první zkoušky, 60 GB na hodinová videa** (viz kapitola 7). |
 | Internet | Při instalaci (GitHub, PyPI, Hugging Face), při stahování videí z YouTube a při překladu přes Codex. Samotný dabing modely stahovat nemusí. |
 | Přístup ke GitHubu | Repozitář je soukromý. Potřebuješ pozvánku od vlastníka a svůj účet na GitHubu. |
-| Účet ChatGPT | Pro překlad „S Codexem" (předplatné ChatGPT, ne placené API). Bez něj jde jen režim „Plně lokální" s LM Studiem. |
+| Účet ChatGPT | Pro překlad Codexem (předplatné ChatGPT, ne placené API). Bez něj použiješ lokální překladač (Ollama nebo LM Studio). |
 | Python, Git | Python 3.12 si `uv` stáhne samo, nic neinstaluj. Git dodají Command Line Tools. |
 
 Čas instalace: celá instalace trvá zhruba 30 až 90 minut (odhad, převážně stahování: kroky 1 až 3
@@ -47,7 +72,7 @@ neuspávej ho.
 Čas a limit: dabing trvá zhruba 3 až 8násobek délky videa (viz kapitola 7). Překlad Codexem čerpá
 limit tvého předplatného ChatGPT.
 
-## 2. Instalace krok za krokem
+## 2. Ruční postup (krok za krokem)
 
 Kroky 2 a 4 obsahují heslo nebo přihlášení. Dělej je sám v terminálu. AI asistent je za tebe
 dělat nemá a ty mu heslo ani přihlašovací kód neposílej.
@@ -98,7 +123,7 @@ brew install ffmpeg yt-dlp uv gh
 - `yt-dlp` z Homebrew přitáhne i `deno`, což je JavaScript runtime, který YouTube vyžaduje.
   yt-dlp musí být **příkaz v PATH** (Python balíček v projektu není).
 - `gh` je jen kvůli soukromému repozitáři.
-- Volitelně, jen pro režim „Plně lokální": `brew install --cask lm-studio`.
+- Volitelně, jen pro lokální překlad: `brew install ollama` nebo `brew install --cask lm-studio` (`instalovat.sh` je neinstaluje).
 
 Kontrola: `ffmpeg -version | head -1`, `ffprobe -version | head -1`, `yt-dlp --version`,
 `deno --version`, `uv --version`.
@@ -281,9 +306,25 @@ Pasti:
   Silero VAD používáš v jiných projektech přes `torch.hub.load`, může se s tímhle souborem
   míchat (existující složka se nestahuje znovu). Případná změna cesty je na vlastníkovi repozitáře.
 
-## 4. Překlad: Codex nebo LM Studio
+## 4. Překlad: Codex, Ollama nebo LM Studio
 
-### Režim „S Codexem" (výchozí, nejlepší překlad)
+V aplikaci je sekce **„Kdo překládá"** se třemi volbami: **Codex**, **Ollama**, **LM Studio**.
+U každé aplikace sama zjistí stav, ukáže další krok, nabídne rozbalovací seznam modelů a tlačítko
+**„Zapnout server"**. Volba se pamatuje v `nastaveni.json`. Lokální režim (Ollama, LM Studio)
+neposílá nic z Macu a kontrola podle snímků je v něm vypnutá.
+
+U Ollamy a LM Studia lab mluví s jejich API na adrese ve volbě **„Adresa API"** (výchozí
+`http://127.0.0.1:11434` / `http://127.0.0.1:1234`, uložená zvlášť pro každou službu v `nastaveni.json`,
+prázdné pole = výchozí; proměnná prostředí `DABING_OLLAMA_URL` / `DABING_LMSTUDIO_URL` má přednost).
+Změna adresy obnoví stav a seznam modelů a platí i pro „Přegenerovat". „Zapnout server" se ukáže jen
+u adresy na tomhle Macu; u adresy mimo něj lab varuje, že text videa odchází na ten počítač.
+
+Kvalita překladu: **Codex je nejlepší**, a navíc ověřuje jména na webu. Lokální modely jména na
+webu nekontrolují. Který lokální model použít, je volba podle paměti Macu: větší model dá lepší
+překlad, ale zabere víc RAM (lokální překladač obecně od 24 GB). Ollamu ani LM Studio ani žádný
+model `instalovat.sh` neinstaluje, každý si je stáhne sám.
+
+### Codex (výchozí, nejlepší překlad)
 
 Codex je součástí instalace (balíček `openai-codex` přitáhne vlastní program `codex`). Nic dalšího
 neinstaluj (žádné `npm i -g @openai/codex`, žádné `brew install codex`). Tvůj případný vlastní
@@ -291,7 +332,7 @@ Codex CLI (`~/.codex`) lab nepoužije a nezmění, běží s oddělenou složkou
 
 Přihlášení se dělá **v labu**, ne v terminálu:
 
-1. Spusť `./spustit.sh` a v prohlížeči rozbal sekci **„Codex účet (překlad)"**.
+1. Spusť `dabing` (nebo `./spustit.sh`), rozbal sekci **„Kdo překládá"** a zvol Codex.
 2. Klikni na **„Přihlásit kódem"**: zobrazí se odkaz a kód, otevři odkaz (klidně na telefonu),
    přihlas se účtem ChatGPT a zadej kód. Nebo **„Přihlásit v prohlížeči"** (jen na stejném Macu).
 3. Sekce ukáže „Přihlášen účtem ChatGPT … (plán …)".
@@ -312,25 +353,31 @@ Pravidla:
   ```
 
   Když model v seznamu není, překlad skončí chybou „Codex překlad selhal". Kód neupravuj: pošli
-  vlastníkovi repozitáře výpis příkazu `c.modely()` (bez e-mailu) a mezitím použij režim „Plně
-  lokální".
+  vlastníkovi repozitáře výpis příkazu `c.modely()` (bez e-mailu) a mezitím použij Ollamu nebo LM Studio.
 - **Soukromí:** do OpenAI jde text vět, název a popis videa a dotazy na ověření jmen, produktů a
-  čísel na webu. **Zvuk nikdy.** Režim „Plně lokální" neposílá nic.
+  čísel na webu. **Zvuk nikdy.** Lokální překladače (Ollama, LM Studio) neposílají nic.
 - **Kvóta:** překlad čerpá limit předplatného. Z měření autora: 16minutové video zhruba 16 % hlavního
   okna limitu (10 turnů), 54minutové zhruba 21 %. Plán předplatného může limit snižovat.
 - Stav účtu (bez tokenů, nespotřebuje kvótu; vypíše e-mail účtu):
   `.venv/bin/python -c "from dabing import ucet; print(ucet.stav())"`
 
-### Režim „Plně lokální" (LM Studio, nic neodchází z Macu)
+### Ollama (lokálně, nic neodchází z Macu)
 
-1. `brew install --cask lm-studio`, v aplikaci stáhni překladový model (autor testoval třídu
-   Gemma 12B QAT, zhruba 7 GB; potřebuje slušnou češtinu).
-2. V LM Studiu načti **jen jeden jazykový model** a spusť server (Developer, Start Server) na
-   `http://127.0.0.1:1234`. Lab vezme první model v nabídce, jehož jméno neobsahuje „embed".
-3. U modelů s „thinking" (Gemma 4) ho vypni, jinak vrátí prázdnou odpověď.
-4. Rychlý test: `curl -s http://127.0.0.1:1234/v1/models`.
-5. V labu zvol Režim „Plně lokální". Jména se v tomto režimu na webu neověřují. Model v LM Studiu
-   zabírá RAM navíc (12B ve 4 bitech zhruba 8 až 10 GB, odhad), proto od 24 GB RAM.
+1. `brew install ollama`.
+2. V aplikaci zvol Ollamu a klikni **„Zapnout server"**. Bez běžícího serveru model stáhnout nejde.
+3. Stáhni si model podle paměti svého Macu: `ollama pull <model>` (velikost modelu je u něj na
+   <https://ollama.com/library>). Volba je na tobě.
+4. Klikni **„Znovu zkontrolovat"** a v rozbalovacím seznamu vyber model. Seznam ukáže všechny
+   stažené modely kromě cloudových, ty běží mimo Mac.
+
+### LM Studio (lokálně, nic neodchází z Macu)
+
+1. `brew install --cask lm-studio`, v aplikaci si stáhni model podle paměti svého Macu (potřebuje
+   slušnou češtinu).
+2. V aplikaci labu zvol LM Studio a klikni **„Zapnout server"** (nebo v LM Studiu Developer,
+   Start Server na `http://127.0.0.1:1234`). Pak v rozbalovacím seznamu vyber model.
+3. Když model vrací prázdnou odpověď, vypni v něm přemýšlení (thinking/reasoning).
+4. Rychlý test: `curl -s http://127.0.0.1:1234/v1/models`. Model zabírá RAM navíc.
 
 ## 5. Zkoušky po instalaci (žebřík)
 
@@ -446,18 +493,19 @@ v `logy/omnivoice.log`. **Neopakuj slepě**: nejdřív si přečti, co skutečn�
 | `Soubor modelu BandIt se liší od ověřeného (SHA-256)` | Poškozené stažení | Smaž soubor a stáhni znovu. |
 | `Silero VAD chybí … maska podkladu pojede jen podle slov` | Soubor není na místě | Nefatální. Stáhni `silero` skriptem. |
 | `yt-dlp skončil chybou … HTTP Error 403` | Starý yt-dlp (YouTube se mění) | `brew upgrade yt-dlp` (u Homebrew nejde `yt-dlp -U`). Ověř `deno --version`. |
+| `Sign in to confirm you're not a bot` | YouTube blokuje IP adresu, nejčastěji kvůli VPN | Přepni VPN na jinou zemi, nebo ji vypni, a zkus znovu. |
 | `yt-dlp nenačetl video` | Soukromé nebo věkově omezené video, geoblok, „Sign in to confirm you're not a bot" | Lab cookies neumí. Pokud k videu máš právo, stáhni ho jinak a napiš cestu k souboru do pole „Odkaz" (nebo ho nahraj). |
 | `loudnorm nevrátil měření`, chyba ffmpegu | Chybí nebo starý ffmpeg | `brew install ffmpeg` (včetně `ffprobe`). |
-| Před spuštěním: „Překlad Codexem potřebuje přihlášení" | Nejsi přihlášený | Sekce „Codex účet (překlad)", kapitola 4. Nebo zvol „Plně lokální". |
-| „Codex je přihlášený API klíčem, lab jede jen přes předplatné" | Přihlášení nebylo účtem ChatGPT | V sekci „Codex účet" se odhlas a přihlas účtem ChatGPT. |
+| Před spuštěním: „Překlad Codexem potřebuje přihlášení" | Nejsi přihlášený | Sekce „Kdo překládá", kapitola 4. Nebo zvol Ollamu či LM Studio. |
+| „Codex je přihlášený API klíčem, lab jede jen přes předplatné" | Přihlášení nebylo účtem ChatGPT | V sekci „Kdo překládá" se odhlas a přihlas účtem ChatGPT. |
 | `Stav účtu se nepodařilo zjistit …` | Nenaběhl přibalený Codex | Zkus stupeň 1 (`codex-cli 0.154.0`). Zopakuj krok 5. |
-| `Codex překlad selhal (failed): …` | Vyčerpaná kvóta, nebo model `gpt-5.6-terra` účet nemá | Počkej na reset limitu, přepni na „Plně lokální", nebo ověř modely (kapitola 4). |
+| `Codex překlad selhal (failed): …` | Vyčerpaná kvóta, nebo model `gpt-5.6-terra` účet nemá | Počkej na reset limitu, přepni na Ollamu či LM Studio, nebo ověř modely (kapitola 4). |
 | `Překlad chybí u vět […]` | Neúplná odpověď | Spusť znovu, hotové kroky se přeskočí. |
 | `gh repo clone` hlásí `Could not resolve to a Repository` nebo `404` | Pozvánka není přijatá, špatný `<VLASTNIK>`, nebo jsi v `gh auth login` zvolil jiný účet | Přijmi pozvánku, ověř `gh auth status` (správný účet) a přesné jméno vlastníka z odkazu v pozvánce. |
 | Instalace nebo stahování se přerušilo (zavřené okno, vypadlý internet, uspání) | Přerušený krok | Zopakuj stejný příkaz: `uv`, `brew` i stahování modelů naváží a hotové přeskočí. Nic nemaž a nepřeinstalovávej. |
 | `No space left on device` | Plný disk | Uvolni místo (`df -h .`), zopakuj krok. Úklid: kapitola 9. Nic nemaž naslepo. |
 | `git pull` hlásí, že by přepsal `uv.lock` (untracked working tree files) | Lokálně vzniklý `uv.lock`, který vlastník mezitím přidal do repozitáře | Smaž lokální soubory (`rm -f uv.lock worker/omnivoice/uv.lock`), spusť `git pull` znovu a pak příkazy z kroku 5. |
-| `LM Studio neběží …` / `V LM Studiu není načtený žádný jazykový model` / prázdná odpověď | Server neběží, nebo model s thinking | Kapitola 4. |
+| `LM Studio neběží …` / prázdná odpověď | Server neběží, nebo model vrací prázdnou odpověď (zapnuté přemýšlení) | Kapitola 4: „Zapnout server", případně vypnout thinking. |
 | `Věta N: Worker skončil (nejspíš chyba MPS) … restartuji worker` | Chyba paměti GPU shodila hlasový proces | Ojedinělé je v pořádku. Při opakování (`worker opakovaně spadl`) zavři těžké aplikace (hlavně LM Studio s modelem), restartuj lab a spusť znovu. Hotové kroky se nepočítají znovu. |
 | `Worker neodpověděl do 60 s` | Úplně první start nového prostředí (příčina neověřena) | Zkus znovu. |
 | `Worker neodpověděl do 300 s` (věta) nebo `do 600 s` (načtení modelu) | Málo paměti nebo uspání Macu | Zavři ostatní aplikace, Mac nech v zásuvce s otevřeným víkem. |
@@ -511,7 +559,7 @@ Značky v tabulce vět (například „HLAS NESEDÍ — poslechni") jsou upozorn
 
 ## 9. Odinstalace a úklid disku
 
-Nejdřív v labu klikni na „Odhlásit" v sekci „Codex účet" (smaže přihlášení z `codex_home/`).
+Nejdřív v labu klikni na „Odhlásit" v sekci „Kdo překládá" (smaže přihlášení z `codex_home/`).
 
 Velikosti zakázek a jejich smazání (za `<ID>` dosaď jméno složky):
 

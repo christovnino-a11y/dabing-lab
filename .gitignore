@@ -1,5 +1,6 @@
 .venv/
 worker/*/.venv/
+worker/*/uv.lock
 jobs/
 logy/
 codex_home/*
@@ -20,3 +21,4 @@ modely/
 *.ckpt
 *.pth
 *.safetensors
+nastaveni.json

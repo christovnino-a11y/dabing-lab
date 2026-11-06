@@ -622,7 +622,7 @@ class Hlas:
             if v.prirozena_s > s * ZRYCHLENI_BEZ_OBAV and not v.upraveno:
                 dlouhe.append((v, s))
         if dlouhe:
-            prubeh(USEK_ZKRACENI[0], f"Zkracuji {len(dlouhe)} vět, které se nevejdou (Codex)…")
+            prubeh(USEK_ZKRACENI[0], f"Zkracuji {len(dlouhe)} vět, které se nevejdou…")
             for v, s in dlouhe:
                 v.max_znaku = max(8, int(len(v.vyslov or v.cs) * s / v.prirozena_s * 0.95))
             translate.zkrat(self.z, [v for v, _ in dlouhe], self.log)
@@ -634,7 +634,7 @@ class Hlas:
                   if v.tts and (v.vyslov or v.cs).strip() and not v.upraveno and v.delka >= MIN_PRODLOUZENI_S
                   and v.prirozena_s < v.delka * PRAH_PRODLOUZENI]
         if kratke:
-            prubeh(USEK_PRODLOUZENI[0], f"Prodlužuji {len(kratke)} vět, po kterých by zůstalo ticho (Codex)…")
+            prubeh(USEK_PRODLOUZENI[0], f"Prodlužuji {len(kratke)} vět, po kterých by zůstalo ticho…")
             puvodni = {v.id: v.vyslov or v.cs for v, _ in kratke}
             for v, s in kratke:
                 znaku_za_s = len(puvodni[v.id]) / max(v.prirozena_s, 0.3)  # tahle věta, tenhle hlas

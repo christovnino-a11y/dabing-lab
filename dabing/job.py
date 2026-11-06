@@ -68,7 +68,8 @@ class Zakazka:
     delka_s: float = 0.0
     jazyk: str = "cs"
     jazyk_zdroje: str = "auto"      # jazyk originálu ("auto" = pozná překladač sám)
-    prekladac: str = "codex"        # "codex" nebo "offline"
+    prekladac: str = "codex"        # "codex" | "ollama" | "lmstudio" (starší zakázky měly "offline" = LM Studio)
+    model_prekladu: str = ""        # model lokálního překladače ("" = první dostupný)
     pocet_mluvcich: int | None = None
     vytvoreno: str = ""
     kroky: dict[str, str] = field(default_factory=dict)  # krok -> čas dokončení
@@ -105,11 +106,18 @@ class Zakazka:
         platne = {f.name for f in fields(Veta)}
         vety = [Veta(**{k: v for k, v in x.items() if k in platne}) for x in data.pop("vety", [])]
         platne_z = {f.name for f in fields(cls)}
-        return cls(**{k: v for k, v in data.items() if k in platne_z}, vety=vety)
+        z = cls(**{k: v for k, v in data.items() if k in platne_z}, vety=vety)
+        z.prekladac = normalizuj_prekladac(z.prekladac)
+        return z
 
     def hotovo(self, krok: str) -> None:
         self.kroky[krok] = time.strftime("%Y-%m-%d %H:%M:%S")
         self.uloz()
+
+
+def normalizuj_prekladac(prekladac: str) -> str:
+    """Starý režim "offline" byl LM Studio; přejmenování nesmí vyvolat nový překlad."""
+    return "lmstudio" if prekladac == "offline" else prekladac
 
 
 def id_ze_souboru(cesta: Path) -> str:

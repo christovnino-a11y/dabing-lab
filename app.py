@@ -1,6 +1,6 @@
 """Dabing lab — YouTube video do češtiny (verze A).
 
-Přepis Parakeet, mluvčí Nemotron, překlad Codex (nebo offline LM Studio),
+Přepis Parakeet, mluvčí Nemotron, překlad Codex nebo lokální model (Ollama, LM Studio),
 hlas OmniVoice klonem mluvčího s emocí z originálu. Gradio na :7872.
 
 Tento proces nenačítá torch ani mlx: těžké kroky běží jako podprocesy
@@ -17,14 +17,17 @@ from pathlib import Path
 
 import gradio as gr
 
-from dabing import ucet
+from dabing import lokalni, nastaveni, ucet
 from dabing.config import JAZYKY, JAZYKY_ZDROJE, PORT
 from dabing.job import Zakazka
 from dabing.pipeline import Pipeline
 from dabing.qa_text import nacti_qa
 from dabing.tts import Zruseno
 
-REZIMY = {"S Codexem (nejlepší překlad)": "codex", "Plně lokální (nic neodchází z Macu)": "offline"}
+PREKLADACE = {"Codex (předplatné ChatGPT, nejlepší překlad)": "codex",
+              "Ollama (lokálně, nic neodchází z Macu)": "ollama",
+              "LM Studio (lokálně, nic neodchází z Macu)": "lmstudio"}
+NAZEV_PREKLADACE = {v: k for k, v in PREKLADACE.items()}
 MLUVCI = ["Automaticky", "1", "2", "3", "4", "5", "6"]
 
 
@@ -158,26 +161,43 @@ def _prubeh_behu(prace_s_pipeline):
             _beh["pipeline"] = None
 
 
-def spustit(odkaz: str, soubor, rezim: str, jazyk_videa: str, mluvci: str, jazyk: str,
-            pohlavi: str = "", snimky: bool = False):
+def _over_prekladac(prekladac: str, model: str) -> tuple[str, str]:
+    """(model, chyba): je zvolený překladač připravený? Model je volba uživatele, lab žádný nevnucuje."""
+    if prekladac == "codex":
+        stav_uctu = ucet.stav()
+        if stav_uctu.prihlasen:
+            return "", ""
+        return "", ("Překlad Codexem potřebuje přihlášení — přihlas se nahoře v sekci **Kdo překládá**, "
+                    "nebo zvol lokální model." if stav_uctu.overeno else stav_uctu.popis)
+    st = lokalni.stav(prekladac)
+    if not st.bezi or not st.modely:
+        return "", st.popis
+    if model in st.modely:
+        return model, ""
+    if len(st.modely) == 1:
+        return st.modely[0], ""
+    return "", "Vyber nahoře v sekci **Kdo překládá** model pro překlad."
+
+
+def spustit(odkaz: str, soubor, prekladac_volba: str, model: str, jazyk_videa: str, mluvci: str,
+            jazyk: str, pohlavi: str = "", snimky: bool = False):
     zdroj = (soubor if isinstance(soubor, str) else getattr(soubor, "name", None)) or (odkaz or "").strip()
     if not zdroj:
         yield "", "Vlož odkaz na YouTube nebo nahraj soubor.", gr.skip(), gr.skip(), gr.skip(), gr.skip()
         return
-    if REZIMY[rezim] == "codex":
-        # radši hned než po stažení, separaci a přepisu (desítky minut)
-        stav_uctu = ucet.stav()
-        if not stav_uctu.prihlasen:
-            zprava = ("Překlad Codexem potřebuje přihlášení — přihlas se nahoře v sekci **Codex účet**, "
-                      "nebo zvol plně lokální režim." if stav_uctu.overeno else stav_uctu.popis)
-            yield "", zprava, gr.skip(), gr.skip(), gr.skip(), gr.skip()
-            return
+    prekladac = PREKLADACE[prekladac_volba]
+    model, chyba = _over_prekladac(prekladac, model)  # radši hned než po stažení a přepisu (desítky minut)
+    if chyba:
+        yield "", chyba, gr.skip(), gr.skip(), gr.skip(), gr.skip()
+        return
+    if prekladac != "codex":
+        snimky = False  # lokální režim nic neposílá ven, ani snímky
     pocet = None if mluvci == "Automaticky" else int(mluvci)
-    yield from _prubeh_behu(lambda p: p.cely(zdroj, JAZYKY[jazyk], REZIMY[rezim], pocet,
-                                             JAZYKY_ZDROJE[jazyk_videa], _pohlavi(pohlavi), snimky))
+    yield from _prubeh_behu(lambda p: p.cely(zdroj, JAZYKY[jazyk], prekladac, pocet,
+                                             JAZYKY_ZDROJE[jazyk_videa], _pohlavi(pohlavi), snimky, model))
 
 
-def pregenerovat(id_zakazky: str, tabulka):
+def pregenerovat(id_zakazky: str, tabulka, prekladac_volba: str, model: str):
     if not id_zakazky:
         yield "", "Nejdřív dokonči dabing.", gr.skip(), gr.skip(), gr.skip(), gr.skip()
         return
@@ -186,10 +206,18 @@ def pregenerovat(id_zakazky: str, tabulka):
     if not any(v.cs != zmeny[v.id] for v in Zakazka.nacti(id_zakazky).vety if v.id in zmeny):
         yield "", "V tabulce se nic nezměnilo.", gr.skip(), gr.skip(), gr.skip(), gr.skip()
         return
+    # věty se při namlouvání zkracují a prodlužují překladačem: platí volba v UI, ne ta ze zakázky
+    # (po přepnutí na lokální model by text jinak odešel Codexu)
+    prekladac = PREKLADACE[prekladac_volba]
+    model, chyba = _over_prekladac(prekladac, model)
+    if chyba:
+        yield "", chyba, gr.skip(), gr.skip(), gr.skip(), gr.skip()
+        return
 
     def prace(p: Pipeline):
         # úpravy se zapíší až po rezervaci běhu, ať je nepřepíše jiný běžící dabing
         z = Zakazka.nacti(id_zakazky)
+        z.prekladac, z.model_prekladu = prekladac, model
         for v in z.vety:
             novy = zmeny.get(v.id)
             if novy and novy != v.cs:
@@ -208,10 +236,65 @@ def zrusit():
     return "Zastavuji…"
 
 
-# ---------------------------------------------------------------- účet Codexu
-def ukaz_ucet():
-    stav = ucet.stav()
-    return stav.popis, gr.update(open=not stav.prihlasen)
+# ---------------------------------------------------------------- kdo překládá
+def obnov_prekladac(prekladac: str, pri_nacteni: bool = False):
+    """Stav vybraného překladače → [stav, přihlášení, řádek lokálního, model, zapnout, snímky, panel, adresa]."""
+    if prekladac == "codex":
+        st = ucet.stav()
+        text = ("✅ " if st.prihlasen else "⚠️ ") + st.popis
+        return (text, gr.update(visible=True), gr.update(visible=False),
+                gr.update(choices=[], value=None), gr.update(visible=False),
+                gr.update(visible=True), gr.update(open=not st.prihlasen) if pri_nacteni else gr.skip(),
+                gr.update(visible=False))
+    st = lokalni.stav(prekladac)
+    ulozeny = nastaveni.ulozeny_model(prekladac)
+    # jediný model je jasná volba; z víc modelů vybírá uživatel, předvyplněný by byl jen náhodou první
+    vybrany = ulozeny if ulozeny in st.modely else (st.modely[0] if len(st.modely) == 1 else None)
+    ok = st.bezi and bool(vybrany)
+    popis = "Vyber model, který ti stačí pamětí Macu." if st.bezi and st.modely and not vybrany else st.popis
+    if not lokalni.je_na_tomto_macu(prekladac):
+        popis += "  \n⚠️ Adresa je mimo tento Mac — text videa odchází na ten počítač."
+    return (("✅ " if ok else "⚠️ ") + popis, gr.update(visible=False), gr.update(visible=True),
+            gr.update(choices=st.modely, value=vybrany),
+            gr.update(visible=st.nainstalovano and not st.bezi and lokalni.je_na_tomto_macu(prekladac)),
+            gr.update(visible=False), gr.update(open=not ok) if pri_nacteni else gr.skip(),
+            gr.update(visible=True, value=nastaveni.ulozena_adresa(prekladac) or lokalni.VYCHOZI[prekladac]))
+
+
+def pri_startu():
+    prekladac = nastaveni.vychozi_prekladac()
+    return (NAZEV_PREKLADACE[prekladac], *obnov_prekladac(prekladac, pri_nacteni=True))
+
+
+def zmena_prekladace(volba: str):
+    prekladac = PREKLADACE[volba]
+    nastaveni.uloz_volbu(prekladac=prekladac)
+    return obnov_prekladac(prekladac)
+
+
+def zmena_modelu(volba: str, model: str):
+    if not model:
+        return gr.skip()
+    nastaveni.uloz_volbu(sluzba=PREKLADACE[volba], model=model)
+    return f"✅ Překládat bude model {model}."
+
+
+def znovu_zkontrolovat(volba: str, adresa: str = ""):
+    """U Ollamy a LM Studia se nejdřív uloží adresa API z formuláře (prázdná = výchozí)."""
+    prekladac = PREKLADACE[volba]
+    if prekladac != "codex":
+        nastaveni.uloz_adresu(prekladac, adresa)
+    return obnov_prekladac(prekladac)
+
+
+def zapnout_server(volba: str):
+    prekladac = PREKLADACE[volba]
+    if prekladac == "codex":
+        return obnov_prekladac(prekladac)
+    zprava = lokalni.zapni(prekladac)
+    vysledek = obnov_prekladac(prekladac)
+    # když se zapnout nepovedlo, řekne `zapni` proč a co dál; stav by jen opakoval „klikni na Zapnout"
+    return vysledek if lokalni.stav(prekladac).bezi else (f"⚠️ {zprava}", *vysledek[1:])
 
 
 def _prihlasit(druh: str):
@@ -272,21 +355,24 @@ def odhlasit():
 with gr.Blocks(title="Dabing") as demo:
     gr.Markdown("# Dabing\nVideo z YouTube nebo souboru do češtiny či jiného jazyka: přepis, mluvčí, "
                 "překlad a hlas naklonovaný z originálu, ostatní zvuky zůstávají.")
-    with gr.Accordion("Codex účet (překlad)", open=False) as ucet_panel:
-        gr.Markdown("Překlad Codexem jede přes tvé předplatné ChatGPT (ne přes placené API). "
-                    "Přihlášení zůstane uložené v `codex_home/` tohoto labu, do gitu nejde.")
-        ucet_stav = gr.Markdown("Zjišťuji stav účtu…")
-        with gr.Row():
+    with gr.Accordion("Kdo překládá", open=False) as panel:
+        prekladac = gr.Radio(label="Kdo překládá", choices=list(PREKLADACE), value=next(iter(PREKLADACE)))
+        gr.Markdown("Přepis, mluvčí a klon hlasu běží vždy lokálně; volba určuje jen překlad.")
+        ucet_stav = gr.Markdown("Zjišťuji stav…")
+        with gr.Row(visible=True) as codex_radek:
             prihlas_kod = gr.Button("Přihlásit kódem", variant="primary")
             prihlas_web = gr.Button("Přihlásit v prohlížeči")
             odhlas = gr.Button("Odhlásit")
+        with gr.Row(visible=False) as lokalni_radek:
+            model = gr.Dropdown(label="Model", choices=[], value=None, allow_custom_value=False, scale=3)
+            adresa = gr.Textbox(label="Adresa API", placeholder="http://127.0.0.1:11434", scale=3,
+                                info="Přes tuhle adresu se lab k Ollamě / LM Studiu připojuje. Prázdné = výchozí.")
+            znovu = gr.Button("Znovu zkontrolovat", scale=1)
+            zapnout = gr.Button("Zapnout server", scale=1, visible=False)
     with gr.Row():
         odkaz = gr.Textbox(label="Odkaz na YouTube", placeholder="https://youtu.be/…", scale=3)
         soubor = gr.File(label="…nebo vlastní video/zvuk", file_types=["video", "audio"],
                          type="filepath", scale=2)
-    rezim = gr.Radio(label="Režim", choices=list(REZIMY), value=next(iter(REZIMY)),
-                     info="Přepis, mluvčí a klon hlasu běží vždy lokálně. Režim určuje, kdo "
-                          "překládá: Codex, nebo model v LM Studiu (musí v něm běžet server).")
     with gr.Row():
         jazyk_videa = gr.Dropdown(label="Jazyk videa", choices=list(JAZYKY_ZDROJE),
                                   value="Automaticky", scale=1)
@@ -296,7 +382,7 @@ with gr.Blocks(title="Dabing") as demo:
                              info="Pohlaví se pozná z hlasu; sem napiš jen když to nesedí. "
                                   "Číslo mluvčího jako v tabulce (M1 = 1). Rozhoduje o rodu sloves v překladu.")
     snimky = gr.Checkbox(label="Ověřit pohlaví každého mluvčího na 3 snímcích videa (Codex)",
-                         value=False,
+                         value=False, visible=True,
                          info="Jediný případ, kdy z Macu odejde obraz (ne text); na snímcích bývají obličeje. "
                               "Bez zaškrtnutí se nic neposílá a rod se určí z výšky hlasu, u nejistých z kontextu.")
     with gr.Row():
@@ -315,13 +401,20 @@ with gr.Blocks(title="Dabing") as demo:
     id_zakazky = gr.State("")
 
     vystupy = [log, stav, video, soubory, tabulka, id_zakazky]
-    spust.click(spustit, [odkaz, soubor, rezim, jazyk_videa, mluvci, jazyk, pohlavi, snimky], vystupy)
-    pregen.click(pregenerovat, [id_zakazky, tabulka], vystupy)
+    spust.click(spustit, [odkaz, soubor, prekladac, model, jazyk_videa, mluvci, jazyk, pohlavi, snimky], vystupy)
+    pregen.click(pregenerovat, [id_zakazky, tabulka, prekladac, model], vystupy)
     zrus.click(zrusit, None, stav)
     prihlas_kod.click(prihlasit_kodem, None, ucet_stav)
     prihlas_web.click(prihlasit_prohlizecem, None, ucet_stav)
     odhlas.click(odhlasit, None, ucet_stav)
-    demo.load(ukaz_ucet, None, [ucet_stav, ucet_panel])
+    obnova = [ucet_stav, codex_radek, lokalni_radek, model, zapnout, snimky, panel, adresa]
+    prekladac.input(zmena_prekladace, prekladac, obnova)
+    model.input(zmena_modelu, [prekladac, model], ucet_stav)
+    znovu.click(znovu_zkontrolovat, [prekladac, adresa], obnova)
+    adresa.submit(znovu_zkontrolovat, [prekladac, adresa], obnova)
+    adresa.blur(znovu_zkontrolovat, [prekladac, adresa], obnova)
+    zapnout.click(zapnout_server, prekladac, obnova)
+    demo.load(pri_startu, None, [prekladac, *obnova])
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""Překlad vět pro dabing s rozpočtem délky: Codex (výchozí) nebo offline LM Studio.
+"""Překlad vět pro dabing s rozpočtem délky: Codex, nebo lokální model (Ollama, LM Studio).
 
 Codex dostává věty po dávkách (každý turn nese ~18k tokenů režie, takže po
 jedné větě by to bylo drahé a pomalé). Každá věta má limit znaků odvozený z délky
@@ -12,9 +12,7 @@ import json
 import re
 from collections.abc import Callable
 
-import requests
-
-from . import titulky
+from . import lokalni, titulky
 from .codex_client import Codex, text
 from .jazyky import DABING, ORIGINAL
 from .job import Veta, Zakazka
@@ -30,7 +28,6 @@ TOLERANCE = 1.05
 # zatímco řečník na obraze ještě mluví). Krátké věty pod MIN_CIL_PRODLOUZENI se neřeší.
 PRAH_KRATKEHO_PREKLADU = 0.8
 MIN_CIL_PRODLOUZENI = 25
-LM_STUDIO = "http://127.0.0.1:1234/v1"
 MAX_POPIS_ZNAKU = 1500  # popis videa bývá dlouhý (odkazy, sponzoři); na jména stačí začátek
 
 SCHEMA_PREKLAD = {
@@ -261,49 +258,43 @@ class _Codex:
         return r.json()
 
 
-class _Offline:
-    """LM Studio na :1234 (OpenAI-kompatibilní API), model, který je v něm načtený."""
+class _Lokalni:
+    """Lokální server (Ollama nebo LM Studio): zvolený model, jinak první dostupný."""
 
     def __init__(self, zakazka: Zakazka, log: Log):
         self.zakazka, self.log = zakazka, log
-        self.model = ""
+        self.sluzba = zakazka.prekladac
+        self.model = zakazka.model_prekladu
 
     def __enter__(self):
-        try:
-            modely = requests.get(f"{LM_STUDIO}/models", timeout=5).json().get("data", [])
-        except requests.RequestException as chyba:
-            raise RuntimeError("LM Studio neběží. Spusť v něm server (Developer → Start Server) "
-                               "a načti model.") from chyba
-        jazykove = [m["id"] for m in modely if "embed" not in m["id"].lower()]
-        if not jazykove:
-            raise RuntimeError("V LM Studiu není načtený žádný jazykový model.")
-        self.model = jazykove[0]
-        self.log(f"Offline překlad přes LM Studio: {self.model}")
+        nazev = lokalni.NAZVY[self.sluzba]
+        s = lokalni.stav(self.sluzba)
+        if not s.bezi or not s.modely:
+            raise RuntimeError(s.popis)
+        if not self.model:
+            self.model = s.modely[0]
+        self.log(f"Lokální překlad přes {nazev}: {self.model}")
         return self
 
     def __exit__(self, *_):
         return False
 
     def dotaz(self, zadani: str) -> dict:
-        odpoved = requests.post(f"{LM_STUDIO}/chat/completions", timeout=900, json={
-            "model": self.model,
-            "temperature": 0.3,
-            "max_tokens": 12000,
-            "messages": [{"role": "system", "content": pokyny(self.zakazka.jazyk, self.zakazka.jazyk_zdroje)},
-                         {"role": "user", "content": zadani}],
-            "response_format": {"type": "json_schema",
-                                "json_schema": {"name": "preklad", "strict": True,
-                                                "schema": SCHEMA_PREKLAD}},
-        }).json()
-        obsah = ((odpoved.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
-        if not obsah.strip():
-            raise RuntimeError("Model v LM Studiu vrátil prázdnou odpověď. U Gemmy 4 vypni v LM Studiu "
-                               "přemýšlení (thinking/reasoning), jinak spotřebuje všechny tokeny.")
-        return json.loads(obsah)
+        return lokalni.dotaz(self.sluzba, self.model,
+                             pokyny(self.zakazka.jazyk, self.zakazka.jazyk_zdroje), zadani, SCHEMA_PREKLAD)
+
+
+def _lokalni_preklad(zakazka: Zakazka) -> bool:
+    """Překládá lokální model (Ollama, LM Studio), ne Codex."""
+    return zakazka.prekladac != "codex"
+
+
+def _davka_znaku(zakazka: Zakazka) -> int:
+    return DAVKA_ZNAKU_OFFLINE if _lokalni_preklad(zakazka) else DAVKA_ZNAKU_CODEX
 
 
 def _klient(zakazka: Zakazka, log: Log):
-    return _Offline(zakazka, log) if zakazka.prekladac == "offline" else _Codex(zakazka, log)
+    return _Codex(zakazka, log) if zakazka.prekladac == "codex" else _Lokalni(zakazka, log)
 
 
 CISLOVKY = re.compile(r"\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|"
@@ -438,7 +429,7 @@ def preloz(zakazka: Zakazka, log: Log, prubeh: Callable[[float, str], None]) -> 
     if not vety:
         return
     podle_id = {v.id: v for v in zakazka.vety}
-    velikost = DAVKA_ZNAKU_OFFLINE if zakazka.prekladac == "offline" else DAVKA_ZNAKU_CODEX
+    velikost = _davka_znaku(zakazka)
     davky = _davky(vety, velikost)
     glosar: list[dict] = []
     druh_titulku = titulky.druh(zakazka)
@@ -450,7 +441,7 @@ def preloz(zakazka: Zakazka, log: Log, prubeh: Callable[[float, str], None]) -> 
     with _klient(zakazka, log) as klient:
         if castecne:
             log(f"Překládám jen {len(vety)} vět bez překladu (ostatní zůstávají).")
-        elif isinstance(klient, _Codex):  # LM Studio web nemá
+        elif isinstance(klient, _Codex):  # lokální modely web nemají
             _over_jmena(klient, zakazka, log, video, prubeh)
         for i, davka in enumerate(davky):
             prubeh(i / max(len(davky), 1), f"Překládám dávku {i + 1}/{len(davky)}…")
@@ -506,7 +497,7 @@ def _prodluz(klient, zakazka: Zakazka, vety: list[Veta], glosar: list[dict],
     prubeh(0.97, f"Prodlužuji {len(kratke)} příliš krátkých vět…")
     podle_id = {v.id: v for v in zakazka.vety}
     pred = {v.id: v.vyslov or v.cs for v in kratke}
-    velikost = DAVKA_ZNAKU_OFFLINE if zakazka.prekladac == "offline" else DAVKA_ZNAKU_CODEX
+    velikost = _davka_znaku(zakazka)
     for davka in _davky(kratke, velikost):
         _pouzij(klient.dotaz(_zadani(davka, [], glosar, "prodlouzit", vsechny=zakazka.vety)), podle_id,
                 zkraceni=False, jen_delsi=True)
@@ -533,7 +524,7 @@ def prodluz(zakazka: Zakazka, vety: list[Veta], log: Log) -> None:
     if not vety:
         return
     podle_id = {v.id: v for v in zakazka.vety}
-    velikost = DAVKA_ZNAKU_OFFLINE if zakazka.prekladac == "offline" else DAVKA_ZNAKU_CODEX
+    velikost = _davka_znaku(zakazka)
     try:
         with _klient(zakazka, log) as klient:
             for davka in _davky(vety, velikost):
@@ -545,12 +536,16 @@ def prodluz(zakazka: Zakazka, vety: list[Veta], log: Log) -> None:
 
 
 def zkrat(zakazka: Zakazka, vety: list[Veta], log: Log) -> None:
-    """Zkrácení podle skutečně změřené délky hlasu (volá se po prvním průchodu TTS)."""
+    """Zkrácení podle skutečně změřené délky hlasu (volá se po prvním průchodu TTS).
+    Selhání překladače dabing nezastaví — věta jen zůstane delší a hlas ji zrychlí."""
     if not vety:
         return
     podle_id = {v.id: v for v in zakazka.vety}
-    velikost = DAVKA_ZNAKU_OFFLINE if zakazka.prekladac == "offline" else DAVKA_ZNAKU_CODEX
-    with _klient(zakazka, log) as klient:
-        for davka in _davky(vety, velikost):
-            _pouzij(klient.dotaz(_zadani(davka, [], [], "zkratit", vsechny=zakazka.vety)), podle_id, zkraceni=True)
+    velikost = _davka_znaku(zakazka)
+    try:
+        with _klient(zakazka, log) as klient:
+            for davka in _davky(vety, velikost):
+                _pouzij(klient.dotaz(_zadani(davka, [], [], "zkratit", vsechny=zakazka.vety)), podle_id, zkraceni=True)
+    except RuntimeError as chyba:
+        log(f"Pozor: dlouhé věty se nepodařilo zkrátit ({chyba}) — některé budou rychlejší.")
     zakazka.uloz()

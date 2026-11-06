@@ -101,11 +101,11 @@ a kvóty, a právní upozornění.
 
 Webová aplikace: stáhne video (yt-dlp), oddělí hlas od pozadí (Demucs), přepíše řeč (Parakeet),
 rozliší mluvčí (Nemotron), najde řeč (Silero VAD), oddělí dialog od hudby a efektů (BandIt Plus),
-přeloží (Codex přes předplatné ChatGPT, nebo LM Studio offline), namluví hlasem naklonovaným
+přeloží (Codex přes předplatné ChatGPT, nebo lokálně Ollama či LM Studio), namluví hlasem naklonovaným
 z originálu (OmniVoice) a zkontroluje podobnost hlasu (ECAPA). Výstup: MP4 se dvěma zvukovými
 stopami, WAV, titulky SRT, podklad FLAC. Přepis, mluvčí a hlas běží vždy na Macu. Do OpenAI jde
-jen text vět, název a popis videa a webové dotazy na jména. Zvuk nikdy. Režim „Plně lokální"
-neposílá nic.
+jen text vět, název a popis videa a webové dotazy na jména. Zvuk nikdy. Lokální překladač
+(Ollama, LM Studio) neposílá nic.
 
 ### Kapitola A: Požadavky a preflight
 
@@ -113,11 +113,11 @@ neposílá nic.
 |---|---|
 | Počítač | Mac s Apple Silicon (M1 a novější). Intel a Rosetta nepůjdou. |
 | macOS | 14 (Sonoma) nebo novější |
-| RAM | 24 GB pohodlné; 16 GB minimum (videa zhruba do 25 až 30 min, odhad); 8 GB nepoužitelné. „Plně lokální" režim od 24 GB. |
+| RAM | 24 GB pohodlné; 16 GB minimum (videa zhruba do 25 až 30 min, odhad); 8 GB nepoužitelné. Lokální překladač (Ollama, LM Studio) od 24 GB. |
 | Volné místo | Instalace zabere zhruba 10 GB. Mít volných 15 GB na instalaci, 30 GB na první zkoušky, 60 GB na hodinová videa. |
 | Internet | při instalaci, při stahování videí a při překladu Codexem |
 | GitHub | repozitář je soukromý: potřeba přijatá pozvánka a vlastní účet na GitHubu |
-| ChatGPT | účet s předplatným pro překlad Codexem (jinak jen „Plně lokální" s LM Studiem) |
+| ChatGPT | účet s předplatným pro překlad Codexem (jinak lokální překladač Ollama nebo LM Studio) |
 
 Preflight (uživatel vloží výpis):
 
@@ -178,7 +178,7 @@ brew install ffmpeg yt-dlp uv gh
 ```
 
 `yt-dlp` přitáhne i `deno` (JavaScript runtime, který YouTube vyžaduje). `gh` je jen pro soukromý
-repozitář. Pro režim „Plně lokální" volitelně `brew install --cask lm-studio`. Ověření:
+repozitář. Pro lokální překlad volitelně `brew install ollama` nebo `brew install --cask lm-studio`. Ověření:
 `ffmpeg -version | head -1`, `yt-dlp --version`, `deno --version`, `uv --version`.
 
 **Krok 4: Stažení repozitáře** (uživatel se přihlásí k GitHubu sám; `<VLASTNIK>` je vlastník
@@ -310,11 +310,16 @@ Otevře prohlížeč na `http://127.0.0.1:7872` (ukončení `Ctrl+C` v Terminál
 `LAB_NO_OPEN=1 ./spustit.sh` (neotevírat prohlížeč), `DABING_DIALOG_CPU=1 ./spustit.sh` (BandIt
 na procesoru). Spouštěč brání uspání Macu a vypíná telemetrii.
 
-### Kapitola E: Překlad: Codex nebo LM Studio
+### Kapitola E: Překlad: Codex, Ollama nebo LM Studio
+
+V aplikaci je sekce **„Kdo překládá"** (Codex / Ollama / LM Studio): ukáže stav, další krok, rozbalovací
+seznam modelů a tlačítko „Zapnout server"; volba se pamatuje. Lokální režim nic neposílá ven a
+kontrola podle snímků je v něm vypnutá. Codex překládá nejlépe a ověřuje jména na webu, lokální
+modely jména neověřují.
 
 **Codex** je součástí instalace, nic dalšího se neinstaluje. Přihlášení se dělá **v okně labu**:
 
-1. V prohlížeči rozbalit sekci **„Codex účet (překlad)"**.
+1. V prohlížeči rozbalit sekci **„Kdo překládá"** a zvolit Codex.
 2. Kliknout **„Přihlásit kódem"** (zobrazí odkaz a kód, otevře se i na telefonu) nebo
    **„Přihlásit v prohlížeči"** (jen na stejném Macu). Přihlásit se účtem ChatGPT. API klíč lab odmítne.
 3. Sekce ukáže „Přihlášen účtem ChatGPT … (plán …)".
@@ -329,15 +334,19 @@ ověř nabídku modelů (po přihlášení):
 ```
 
 Pokud tam model chybí, kód neupravovat: uživatel pošle vlastníkovi repozitáře výpis příkazu
-`c.modely()` (bez e-mailu) a mezitím použije režim „Plně lokální". Překlad čerpá limit předplatného (měření autora: 16 minut videa zhruba
+`c.modely()` (bez e-mailu) a mezitím použije Ollamu nebo LM Studio. Překlad čerpá limit předplatného (měření autora: 16 minut videa zhruba
 16 % hlavního okna limitu, 54 minut zhruba 21 %). Do OpenAI jde text vět, název a popis videa a
 webové dotazy na jména, zvuk nikdy.
 
-**Plně lokální (LM Studio)**: `brew install --cask lm-studio`, stáhnout v aplikaci překladový
-model (autor testoval třídu Gemma 12B QAT, zhruba 7 GB, potřebuje slušnou češtinu), načíst **jen jeden
-jazykový model**, spustit server (Developer, Start Server, `http://127.0.0.1:1234`), u modelů
-s „thinking" ho vypnout. Test: `curl -s http://127.0.0.1:1234/v1/models`. Model zabírá RAM navíc,
-proto od 24 GB. V tomto režimu neodchází z Macu nic.
+**Ollama**: `brew install ollama`, v aplikaci zvolit Ollamu a kliknout „Zapnout server", pak model podle
+paměti Macu (`ollama pull <model>`), kliknout „Znovu zkontrolovat" a vybrat ho v seznamu.
+
+**LM Studio**: `brew install --cask lm-studio`, v aplikaci stáhnout model podle paměti Macu
+(potřebuje slušnou češtinu), v labu zvolit LM Studio, kliknout „Zapnout server" (nebo v LM Studiu
+Developer, Start Server na `http://127.0.0.1:1234`) a vybrat model v seznamu. Když model vrací prázdnou odpověď, vypnout v něm
+přemýšlení (thinking/reasoning). Test: `curl -s http://127.0.0.1:1234/v1/models`.
+
+Lokální modely zabírají RAM navíc, proto od 24 GB. Který model, je volba uživatele; žádný nedoporučuj.
 
 ### Kapitola F: Žebřík zkoušek (jakmile stupeň selže, nepokračovat)
 
@@ -430,14 +439,15 @@ v `logy/omnivoice.log`.
 | `BandIt chybí` / `Silero VAD chybí` | Nefatální; stáhnout `bandit` / `silero`. |
 | SHA-256 BandItu nesedí | Smazat soubor, stáhnout znovu. |
 | `yt-dlp … HTTP Error 403` | `brew upgrade yt-dlp` (u Homebrew nejde `yt-dlp -U`), ověřit `deno --version`. |
+| `Sign in to confirm you're not a bot` | YouTube blokuje IP adresu, obvykle kvůli VPN: přepnout VPN na jinou zemi, nebo ji vypnout. |
 | `yt-dlp nenačetl video` (soukromé, věkově omezené, bot check) | Lab cookies neumí. Je-li k videu právo, stáhnout jinak a cestu k souboru dát do pole „Odkaz". |
 | `loudnorm nevrátil měření`, chyba ffmpegu | `brew install ffmpeg` (včetně ffprobe). |
-| „Překlad Codexem potřebuje přihlášení" | Přihlásit v sekci „Codex účet (překlad)" (kapitola E), nebo „Plně lokální". |
+| „Překlad Codexem potřebuje přihlášení" | Přihlásit v sekci „Kdo překládá" (kapitola E), nebo lokální překladač. |
 | „Codex je přihlášený API klíčem" | V UI se odhlásit a přihlásit účtem ChatGPT. |
 | `Stav účtu se nepodařilo zjistit …` | Nenaběhl přibalený Codex: stupeň 1, krok 5 znovu. |
-| `Codex překlad selhal (failed)` | Vyčerpaná kvóta, nebo model účet nemá: počkat na reset, „Plně lokální", nebo ověřit modely (kapitola E). |
+| `Codex překlad selhal (failed)` | Vyčerpaná kvóta, nebo model účet nemá: počkat na reset, lokální překladač, nebo ověřit modely (kapitola E). |
 | `Překlad chybí u vět […]` | Spustit znovu, hotové kroky se přeskočí. |
-| `LM Studio neběží` / prázdná odpověď | Spustit server, načíst jen jeden jazykový model, vypnout thinking. |
+| `LM Studio neběží` / prázdná odpověď | „Zapnout server" v aplikaci, načíst jen jeden jazykový model, vypnout v něm přemýšlení. |
 | `Worker skončil (nejspíš chyba MPS) … restartuji` | Ojedinělé je v pořádku. Opakované: zavřít těžké aplikace (hlavně LM Studio), restart labu, spustit znovu. |
 | `Worker neodpověděl do 60 s` | První start nového prostředí (příčina neověřena), zkusit znovu. |
 | `Worker neodpověděl do 300 / 600 s` | Málo RAM nebo uspání Macu: zavřít aplikace, Mac v zásuvce. |
@@ -456,7 +466,7 @@ v tabulce vět (například „HLAS NESEDÍ — poslechni") jsou upozornění, n
 
 ### Kapitola J: Odinstalace a úklid (jen na žádost uživatele)
 
-Nejdřív v labu „Odhlásit" v sekci „Codex účet". Zakázky: `du -sh jobs/*`, `rm -rf jobs/<ID>`. Modely
+Nejdřív v labu „Odhlásit" v sekci „Kdo překládá". Zakázky: `du -sh jobs/*`, `rm -rf jobs/<ID>`. Modely
 v HF cache (jen ty, které nepoužívají jiné projekty uživatele):
 
 ```bash
