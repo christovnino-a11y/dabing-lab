@@ -22,3 +22,11 @@ modely/
 *.pth
 *.safetensors
 nastaveni.json
+
+# Citlivé údaje a lokální nastavení AI agentů
+.env
+.env.*
+!.env.example
+**/.claude/settings.local.json
+*.pem
+*.key
